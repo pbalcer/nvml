@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, Intel Corporation
+ * Copyright (c) 2015, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,60 +31,53 @@
  */
 
 /*
- * obj.h -- internal definitions for obj module
+ * container.h -- internal definitions for containers
  */
 
-#define	PMEMOBJ_LOG_PREFIX "libpmemobj"
-#define	PMEMOBJ_LOG_LEVEL_VAR "PMEMOBJ_LOG_LEVEL"
-#define	PMEMOBJ_LOG_FILE_VAR "PMEMOBJ_LOG_FILE"
+enum container_type {
+	CONTAINER_NOOP,
+	CONTAINER_BINARY_SEARCH_TREE,
+	/* CONTAINER_LOCK_FREE_BITWISE_TRIE, */
 
-/* attributes of the obj memory pool format for the pool header */
-#define	OBJ_HDR_SIG "OBJPOOL"	/* must be 8 bytes including '\0' */
-#define	OBJ_FORMAT_MAJOR 1
-#define	OBJ_FORMAT_COMPAT 0x0000
-#define	OBJ_FORMAT_INCOMPAT 0x0000
-#define	OBJ_FORMAT_RO_COMPAT 0x0000
-
-#define MAX_TXOPS 100
-
-enum txop_type {
-	TXOP_TYPE_UNKNOWN,
-	TXOP_TYPE_ALLOC,
-	TXOP_TYPE_FREE,
-	TXOP_TYPE_SET,
-
-	TXOP_TYPE_MAX
+	MAX_CONTAINER_TYPE
 };
 
-struct pmemobj_txop {
-	/* enum txop_type */ uint64_t type;
-	uint64_t addr;
-	uint64_t data;
-	uint64_t len;
+/*
+ * Type of the value stored in the container, the type is a 64bit unsigned
+ * integer because the value stored is chunks unique id.
+ */
+typedef uint64_t val_t;
+
+/*
+ * Can't be 0 because thats a legal unique id of the first chunk in
+ * the first zone.
+ */
+#define	NULL_VAL ~(0)
+
+struct container;
+
+struct container_operations {
+	/*
+	 * Adds a key-value pair to the container.
+	 */
+	bool (*add)(struct container *c, uint64_t key, val_t value);
+	/*
+	 * Gets and removes a key-value pair from the container that has
+	 * an equal key.
+	 */
+	val_t (*get_rm_eq)(struct container *c, uint64_t key);
+	/*
+	 * As above, but key has to be equal or greater.
+	 */
+	val_t (*get_rm_ge)(struct container *c, uint64_t key);
 };
 
-struct pmemobj_tx {
-	int committed;
-	POBJ(struct pmemobj_txop) txop[MAX_TXOPS];
+struct container {
+	enum container_type type;
+	struct container_operations *c_ops;
 };
 
-struct pmemobjpool {
-	struct pool_hdr hdr;	/* memory pool header */
-
-	uint64_t root_offset;
-	POBJ(struct pmemobj_tx) tx;
-
-	/* root info for on-media format... */
-	char layout[PMEMOBJ_LAYOUT_MAX];
-
-	/* some run-time state, allocated out of memory pool... */
-	void *addr;		/* mapped region */
-	size_t size;		/* size of mapped region */
-	int is_pmem;		/* true if pool is PMEM */
-	int rdonly;		/* true if pool is opened read-only */
-	struct pmalloc_pool *pmp;
-
-
-	void *heap;
-};
-
+struct container *container_new(enum container_type type);
+void container_delete(struct container *container);
+void container_init(struct container *container, enum container_type type,
+	struct container_operations *c_ops);

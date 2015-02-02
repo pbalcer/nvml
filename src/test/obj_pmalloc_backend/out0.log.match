@@ -1,0 +1,12 @@
+obj_pmalloc_backend/TEST0: START: obj_pmalloc_backend
+ ./obj_pmalloc_backend$(nW)
+wrapper function bucket_register_class
+wrapper function get_bucket_class_id_by_size
+wrapper function bucket_add_object
+wrapper function get_bucket_class_id_by_size
+wrapper function bucket_add_object
+wrapper function get_bucket_class_id_by_size
+wrapper function bucket_add_object
+wrapper function get_bucket_class_id_by_size
+wrapper function bucket_add_object
+obj_pmalloc_backend/TEST0: Done

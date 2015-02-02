@@ -1,0 +1,3 @@
+obj_basic/TEST0: START: obj_basic
+ ./obj_basic$(nW)
+obj_basic/TEST0: Done

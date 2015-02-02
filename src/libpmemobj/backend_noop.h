@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, Intel Corporation
+ * Copyright (c) 2015, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,60 +31,27 @@
  */
 
 /*
- * obj.h -- internal definitions for obj module
+ * backend_noop.h -- internal definitions for noop backend
  */
 
-#define	PMEMOBJ_LOG_PREFIX "libpmemobj"
-#define	PMEMOBJ_LOG_LEVEL_VAR "PMEMOBJ_LOG_LEVEL"
-#define	PMEMOBJ_LOG_FILE_VAR "PMEMOBJ_LOG_FILE"
-
-/* attributes of the obj memory pool format for the pool header */
-#define	OBJ_HDR_SIG "OBJPOOL"	/* must be 8 bytes including '\0' */
-#define	OBJ_FORMAT_MAJOR 1
-#define	OBJ_FORMAT_COMPAT 0x0000
-#define	OBJ_FORMAT_INCOMPAT 0x0000
-#define	OBJ_FORMAT_RO_COMPAT 0x0000
-
-#define MAX_TXOPS 100
-
-enum txop_type {
-	TXOP_TYPE_UNKNOWN,
-	TXOP_TYPE_ALLOC,
-	TXOP_TYPE_FREE,
-	TXOP_TYPE_SET,
-
-	TXOP_TYPE_MAX
+struct backend_noop {
+	struct backend super;
 };
 
-struct pmemobj_txop {
-	/* enum txop_type */ uint64_t type;
-	uint64_t addr;
-	uint64_t data;
-	uint64_t len;
-};
+struct backend *backend_noop_open(void *ptr, size_t size);
+void backend_noop_close(struct backend *backend);
+bool backend_noop_consistency_check(void *ptr, size_t size);
 
-struct pmemobj_tx {
-	int committed;
-	POBJ(struct pmemobj_txop) txop[MAX_TXOPS];
-};
-
-struct pmemobjpool {
-	struct pool_hdr hdr;	/* memory pool header */
-
-	uint64_t root_offset;
-	POBJ(struct pmemobj_tx) tx;
-
-	/* root info for on-media format... */
-	char layout[PMEMOBJ_LAYOUT_MAX];
-
-	/* some run-time state, allocated out of memory pool... */
-	void *addr;		/* mapped region */
-	size_t size;		/* size of mapped region */
-	int is_pmem;		/* true if pool is PMEM */
-	int rdonly;		/* true if pool is opened read-only */
-	struct pmalloc_pool *pmp;
-
-
-	void *heap;
-};
-
+void noop_bucket_classes(struct pmalloc_pool *pool);
+void noop_fill_buckets(struct pmalloc_pool *pool);
+void noop_set_alloc_ptr(struct arena *arena, uint64_t *ptr, uint64_t value);
+void noop_init_bucket_obj(struct bucket *bucket, struct bucket_object *obj);
+bool noop_set_bucket_obj_state(struct bucket *bucket,
+	struct bucket_object *obj, enum bucket_obj_state state);
+bool noop_locate_bucket_obj(struct pmalloc_pool *pool,
+	struct bucket_object *obj, uint64_t data_offset);
+void *noop_get_direct(struct pmalloc_pool *pool, uint64_t ptr);
+void noop_copy_content(struct pmalloc_pool *pool, struct bucket_object *dest,
+	struct bucket_object *src);
+void noop_set_guard(struct arena *arena, enum guard_type type, uint64_t *ptr);
+void noop_clear_guard(struct arena *arena);

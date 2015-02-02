@@ -84,6 +84,64 @@ void pmemobj_set_funcs(
 		void *(*malloc_func)(size_t size),
 		void (*free_func)(void *ptr));
 
+#define POBJ_ID_MAGIC 0x12345678
+
+#define POBJ(type)\
+union {\
+type *__type;\
+struct pobj_id pobj;\
+}
+
+struct pobj_id {
+	uint64_t offset;
+};
+
+struct transaction_context;
+
+enum tx_state {
+	TX_STATE_UNKNOWN,
+	TX_STATE_FAILED,
+	TX_STATE_SUCCESS,
+	TX_STATE_ABORTED,
+
+	MAX_TX_STATE
+};
+
+typedef enum tx_state (*tx_func)(struct transaction_context *ctx, void *root);
+
+void *pmemobj_init_root(PMEMobjpool *p, size_t size);
+enum tx_state pmemobj_tx_exec(PMEMobjpool *p, tx_func tx);
+int pmemobj_set(struct transaction_context *ctx, void *dst, void *src,
+	size_t size);
+void *pmemobj_direct(struct transaction_context *ctx, struct pobj_id pobj);
+
+int pmemobj_alloc(struct transaction_context *ctx, struct pobj_id *obj,
+	size_t size);
+int pmemobj_free(struct transaction_context *ctx, struct pobj_id *obj);
+
+#define TX_EXEC(name, rname)\
+enum tx_state name(struct transaction_context *__ctx, void *rname)\
+
+#define POBJ_IS_NULL(obj) (obj.pobj.offset == 0)
+
+#define POBJ_NEW(dest) ({\
+if (pmemobj_alloc(__ctx, &dest.pobj, sizeof (*dest.__type)) != 1)\
+return TX_STATE_ABORTED;\
+})
+
+#define POBJ_SET(dest, value) ({\
+typeof (dest) __v = value;\
+if (pmemobj_set(__ctx, &dest, &__v, sizeof (__v)) != 1)\
+return TX_STATE_ABORTED;\
+})
+
+#define POBJ_DELETE(dest) ({\
+if (pmemobj_free(__ctx, &dest.pobj) != 1)\
+return TX_STATE_ABORTED;\
+})
+
+#define D(obj) ((typeof (obj.__type))pmemobj_direct(__ctx, obj.pobj))
+
 #ifdef __cplusplus
 }
 #endif

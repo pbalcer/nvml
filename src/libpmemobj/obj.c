@@ -42,6 +42,8 @@
 #include <uuid/uuid.h>
 #include <time.h>
 #include <endian.h>
+#include <stdbool.h>
+#include <stddef.h>
 
 #include "libpmem.h"
 #include "libpmemobj.h"
@@ -49,6 +51,8 @@
 #include "util.h"
 #include "out.h"
 #include "obj.h"
+
+#include "pmalloc.h"
 
 /*
  * pmemobj_map_common -- (internal) map a transactional memory pool
@@ -129,7 +133,6 @@ pmemobj_map_common(int fd, const char *layout, size_t poolsize, int rdonly,
 		ASSERTeq(rdonly, 0);
 
 		struct pool_hdr *hdrp = &pop->hdr;
-
 		/* check if the pool header is all zeros */
 		if (!util_is_zeroed(hdrp, sizeof (*hdrp))) {
 			LOG(1, "Non-empty file detected");
@@ -161,6 +164,9 @@ pmemobj_map_common(int fd, const char *layout, size_t poolsize, int rdonly,
 
 		/* store pool's header */
 		pmem_msync(hdrp, sizeof (*hdrp));
+
+		pop->root_offset = 0;
+		pmem_msync(&pop->root_offset, sizeof (pop->root_offset));
 	}
 
 	/*
@@ -175,6 +181,13 @@ pmemobj_map_common(int fd, const char *layout, size_t poolsize, int rdonly,
 
 	/* XXX the rest of run-time info */
 
+	pop->pmp = pool_open(&(pop->heap),
+		poolsize - offsetof(struct pmemobjpool, heap), 0);
+
+	if (pop->pmp == NULL) {
+		goto err;
+	}
+
 	/*
 	 * If possible, turn off all permissions on the pool header page.
 	 *
@@ -182,10 +195,6 @@ pmemobj_map_common(int fd, const char *layout, size_t poolsize, int rdonly,
 	 * use. It is not considered an error if this fails.
 	 */
 	util_range_none(addr, sizeof (struct pool_hdr));
-
-	/* the rest should be kept read-only (debug version only) */
-	RANGE_RO(addr + sizeof (struct pool_hdr),
-			poolsize - sizeof (struct pool_hdr));
 
 	LOG(3, "pop %p", pop);
 	return pop;
@@ -247,7 +256,7 @@ pmemobj_close(PMEMobjpool *pop)
 {
 	LOG(3, "pop %p", pop);
 
-	/* XXX stub */
+	pool_close(pop->pmp);
 
 	util_unmap(pop->addr, pop->size);
 }
@@ -276,10 +285,178 @@ pmemobj_check(const char *path, const char *layout)
 
 	/* XXX validate metadata */
 
+	pool_check(&(pop->heap),
+		poolsize - offsetof(struct pmemobjpool, heap), 0);
+
 	pmemobj_close(pop);
 
 	if (consistent)
 		LOG(4, "pool consistency check OK");
 
 	return consistent;
+}
+
+struct transaction_context {
+	PMEMobjpool *pool;
+	struct pmemobj_tx *dtx;
+	int running;
+	int n_txop;
+};
+
+void *pmemobj_init_root(PMEMobjpool *p, size_t size)
+{
+	if (p->root_offset == 0) {
+		pmalloc(p->pmp, &p->root_offset, size);
+	}
+
+	return pdirect(p->pmp, p->root_offset);
+}
+
+void
+tx_abort(struct transaction_context *__ctx)
+{
+	/* XXX */
+}
+
+void
+tx_commit(struct transaction_context *__ctx)
+{
+	__ctx->dtx->committed = 1;
+	pmem_msync(__ctx->dtx, sizeof (*__ctx->dtx));
+
+	for (int i = MAX_TXOPS; i >= 0; --i) {
+		if (POBJ_IS_NULL(__ctx->dtx->txop[i]))
+			continue;
+
+		struct pmemobj_txop *txop = D(__ctx->dtx->txop[i]);
+
+		LOG(0, "Commiting txop: %lu %lu %lu %lu",
+			txop->type, txop->addr, txop->data, txop->len);
+		if (txop->type == TXOP_TYPE_FREE) {
+			pfree(__ctx->pool->pmp, (uint64_t *)(txop->addr +
+				(uint64_t)&(__ctx->pool->heap)));
+		} else if (txop->type == TXOP_TYPE_SET) {
+			pfree(__ctx->pool->pmp, &txop->data);
+		}		
+
+		pfree(__ctx->pool->pmp, &__ctx->dtx->txop[i].pobj.offset);
+	}
+}
+
+enum tx_state
+pmemobj_tx_exec(PMEMobjpool *p, tx_func tx)
+{
+	/* this HAS to be called __ctx */
+	struct transaction_context *__ctx = Malloc(sizeof (*__ctx));
+	if (__ctx == NULL)
+		goto error_tx_malloc;
+
+	__ctx->pool = p;
+
+	if (POBJ_IS_NULL(p->tx)) {
+		POBJ_NEW(p->tx);
+		__ctx->dtx = D(p->tx);
+	} else {
+		/* XXX nested transactions... */
+		Free(__ctx);
+		return TX_STATE_FAILED;
+	}
+
+	__ctx->n_txop = 0;
+
+	__ctx->running = 1;
+	enum tx_state s = tx(__ctx, pdirect(p->pmp, p->root_offset));
+	__ctx->running = 0;
+
+	if (s == TX_STATE_SUCCESS) {
+		tx_commit(__ctx);
+	} else if (s == TX_STATE_ABORTED) {
+		tx_abort(__ctx);
+	}
+
+	POBJ_DELETE(p->tx);
+
+	Free(__ctx);
+
+	return s;
+
+error_tx_malloc:
+	return TX_STATE_FAILED;
+}
+
+int
+pmemobj_set(struct transaction_context *__ctx, void *dst, void *src,
+	size_t size)
+{
+	uint64_t offset = (uint64_t)dst - (uint64_t)&(__ctx->pool->heap);
+	if (__ctx->running) {
+		uint64_t *n_off = 
+			&__ctx->dtx->txop[__ctx->n_txop++].pobj.offset;
+		pmalloc(__ctx->pool->pmp, n_off, sizeof (struct pmemobj_txop));
+
+		struct pmemobj_txop *dtxop =
+			pdirect(__ctx->pool->pmp, *n_off);
+		dtxop->type = TXOP_TYPE_SET;
+		dtxop->addr = offset;
+		dtxop->len = size;
+		pmem_msync(dtxop, sizeof (*dtxop));
+		pmalloc(__ctx->pool->pmp, &dtxop->data, size);
+		struct pmemobj_txop *dd =
+			pdirect(__ctx->pool->pmp, dtxop->data);
+		memcpy(dd, dst, size);
+	}
+
+	memcpy(dst, src, size);
+	pmem_msync(dst, size);
+
+	return 1;
+}
+
+void *
+pmemobj_direct(struct transaction_context *__ctx, struct pobj_id pobj)
+{
+	return pdirect(__ctx->pool->pmp, pobj.offset);
+}
+
+int
+pmemobj_alloc(struct transaction_context *__ctx, struct pobj_id *obj,
+	size_t size)
+{
+	if (__ctx->running) {
+		uint64_t *n_off = 
+			&__ctx->dtx->txop[__ctx->n_txop++].pobj.offset;
+		pmalloc(__ctx->pool->pmp, n_off, sizeof (struct pmemobj_txop));
+
+		struct pmemobj_txop *dtxop =
+			pdirect(__ctx->pool->pmp, *n_off);
+		dtxop->type = TXOP_TYPE_ALLOC;
+		dtxop->addr = (uint64_t)&obj->offset -
+			(uint64_t)&(__ctx->pool->heap);
+		pmem_msync(dtxop, sizeof (*dtxop));
+	}
+
+	pmalloc(__ctx->pool->pmp, &obj->offset, size);
+
+	return 1;
+}
+
+int
+pmemobj_free(struct transaction_context *__ctx, struct pobj_id *obj)
+{
+	if (__ctx->running) {
+		uint64_t *n_off = 
+			&__ctx->dtx->txop[__ctx->n_txop++].pobj.offset;
+		pmalloc(__ctx->pool->pmp, n_off, sizeof (struct pmemobj_txop));
+
+		struct pmemobj_txop *dtxop =
+			pdirect(__ctx->pool->pmp, *n_off);
+		dtxop->type = TXOP_TYPE_FREE;
+		dtxop->addr = (uint64_t)&obj->offset -
+			(uint64_t)&(__ctx->pool->heap);
+		pmem_msync(dtxop, sizeof (*dtxop));
+	} else {
+		pfree(__ctx->pool->pmp, &obj->offset);
+	}
+
+	return 1;
 }

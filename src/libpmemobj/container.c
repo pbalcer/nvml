@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, Intel Corporation
+ * Copyright (c) 2015, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,60 +31,51 @@
  */
 
 /*
- * obj.h -- internal definitions for obj module
+ * container.c -- implementation of container interface
+ *
+ * Container is the structure on which the entire performance of the allocator
+ * relies on - the faster the implementation is the better the overal speed of
+ * frontend interface functions.
+ * This isn't a fully blown universal collection API but rather a specifically
+ * tailored to fit one purpose - to store and find chunks of a given size.
  */
 
-#define	PMEMOBJ_LOG_PREFIX "libpmemobj"
-#define	PMEMOBJ_LOG_LEVEL_VAR "PMEMOBJ_LOG_LEVEL"
-#define	PMEMOBJ_LOG_FILE_VAR "PMEMOBJ_LOG_FILE"
+#include <stdbool.h>
+#include <stdint.h>
+#include <stdlib.h>
+#include "container.h"
+#include "container_noop.h"
+#include "container_bst.h"
+#include "out.h"
+#include "util.h"
 
-/* attributes of the obj memory pool format for the pool header */
-#define	OBJ_HDR_SIG "OBJPOOL"	/* must be 8 bytes including '\0' */
-#define	OBJ_FORMAT_MAJOR 1
-#define	OBJ_FORMAT_COMPAT 0x0000
-#define	OBJ_FORMAT_INCOMPAT 0x0000
-#define	OBJ_FORMAT_RO_COMPAT 0x0000
-
-#define MAX_TXOPS 100
-
-enum txop_type {
-	TXOP_TYPE_UNKNOWN,
-	TXOP_TYPE_ALLOC,
-	TXOP_TYPE_FREE,
-	TXOP_TYPE_SET,
-
-	TXOP_TYPE_MAX
+static struct container *(*container_new_by_type[MAX_CONTAINER_TYPE])() = {
+	container_noop_new,
+	container_bst_new
 };
 
-struct pmemobj_txop {
-	/* enum txop_type */ uint64_t type;
-	uint64_t addr;
-	uint64_t data;
-	uint64_t len;
+static void (*container_delete_by_type[MAX_CONTAINER_TYPE])() = {
+	container_noop_delete,
+	container_bst_delete
 };
 
-struct pmemobj_tx {
-	int committed;
-	POBJ(struct pmemobj_txop) txop[MAX_TXOPS];
-};
+struct container *
+container_new(enum container_type type)
+{
+	return container_new_by_type[type]();
+}
 
-struct pmemobjpool {
-	struct pool_hdr hdr;	/* memory pool header */
+void
+container_delete(struct container *container)
+{
+	ASSERT(container->type < MAX_CONTAINER_TYPE);
+	container_delete_by_type[container->type](container);
+}
 
-	uint64_t root_offset;
-	POBJ(struct pmemobj_tx) tx;
-
-	/* root info for on-media format... */
-	char layout[PMEMOBJ_LAYOUT_MAX];
-
-	/* some run-time state, allocated out of memory pool... */
-	void *addr;		/* mapped region */
-	size_t size;		/* size of mapped region */
-	int is_pmem;		/* true if pool is PMEM */
-	int rdonly;		/* true if pool is opened read-only */
-	struct pmalloc_pool *pmp;
-
-
-	void *heap;
-};
-
+void
+container_init(struct container *container, enum container_type type,
+	struct container_operations *c_ops)
+{
+	container->type = type;
+	container->c_ops = c_ops;
+}

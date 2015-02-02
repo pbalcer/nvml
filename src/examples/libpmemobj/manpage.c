@@ -40,6 +40,7 @@
 #include <stdlib.h>
 #include <unistd.h>
 #include <string.h>
+#include <stdint.h>
 #include <libpmemobj.h>
 
 /* size of the pmemobj pool -- 1 GB */

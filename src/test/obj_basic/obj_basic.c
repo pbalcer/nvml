@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, Intel Corporation
+ * Copyright (c) 2015, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,60 +31,62 @@
  */
 
 /*
- * obj.h -- internal definitions for obj module
+ * obj_basic.c -- test for obj
  */
+#include <stdbool.h>
+#include <assert.h>
+#include <pthread.h>
+#include "unittest.h"
 
-#define	PMEMOBJ_LOG_PREFIX "libpmemobj"
-#define	PMEMOBJ_LOG_LEVEL_VAR "PMEMOBJ_LOG_LEVEL"
-#define	PMEMOBJ_LOG_FILE_VAR "PMEMOBJ_LOG_FILE"
+#define BASIC_LAYOUT "basic"
+#define BASIC_SIZE ((1024 * 1024) * 100)
 
-/* attributes of the obj memory pool format for the pool header */
-#define	OBJ_HDR_SIG "OBJPOOL"	/* must be 8 bytes including '\0' */
-#define	OBJ_FORMAT_MAJOR 1
-#define	OBJ_FORMAT_COMPAT 0x0000
-#define	OBJ_FORMAT_INCOMPAT 0x0000
-#define	OBJ_FORMAT_RO_COMPAT 0x0000
-
-#define MAX_TXOPS 100
-
-enum txop_type {
-	TXOP_TYPE_UNKNOWN,
-	TXOP_TYPE_ALLOC,
-	TXOP_TYPE_FREE,
-	TXOP_TYPE_SET,
-
-	TXOP_TYPE_MAX
+struct node {
+	int value;
+	POBJ(struct node) next;
 };
 
-struct pmemobj_txop {
-	/* enum txop_type */ uint64_t type;
-	uint64_t addr;
-	uint64_t data;
-	uint64_t len;
-};
+TX_EXEC(basic_tx, root)
+{
+	struct node *n = root;
+	OUT("node %p value: %d", n, n->value);
+	POBJ_SET(n->value, 5);
+	if (POBJ_IS_NULL(n->next)) {
+		OUT("next NULL!");
+		POBJ_NEW(n->next);
+		struct node *next = D(n->next);
+		POBJ_SET(next->value, 10);
+	} else {
+		struct node *next = D(n->next);
+		OUT("next %p value: %d", next, next->value);
+		POBJ_DELETE(n->next);
+	}
 
-struct pmemobj_tx {
-	int committed;
-	POBJ(struct pmemobj_txop) txop[MAX_TXOPS];
-};
+	return TX_STATE_SUCCESS;
+}
 
-struct pmemobjpool {
-	struct pool_hdr hdr;	/* memory pool header */
+int
+main(int argc, char *argv[])
+{
+	START(argc, argv, "obj_basic");
+	if (argc < 2)
+	FATAL("usage: %s file", argv[0]);
 
-	uint64_t root_offset;
-	POBJ(struct pmemobj_tx) tx;
+	PMEMobjpool *p = NULL;
 
-	/* root info for on-media format... */
-	char layout[PMEMOBJ_LAYOUT_MAX];
+	if (pmemobj_check(argv[1], BASIC_LAYOUT) == 1) {
+		p = pmemobj_open(argv[1], BASIC_LAYOUT);
+	} else {
+		p = pmemobj_create(argv[1], BASIC_LAYOUT, BASIC_SIZE, S_IRWXU);
+	}
 
-	/* some run-time state, allocated out of memory pool... */
-	void *addr;		/* mapped region */
-	size_t size;		/* size of mapped region */
-	int is_pmem;		/* true if pool is PMEM */
-	int rdonly;		/* true if pool is opened read-only */
-	struct pmalloc_pool *pmp;
+	ASSERT(p != NULL);
 
+	pmemobj_init_root(p, sizeof (struct node));
 
-	void *heap;
-};
+	pmemobj_tx_exec(p, basic_tx);
 
+	/* all done */
+	pmemobj_close(p);
+	DONE(NULL);
+}

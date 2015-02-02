@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, Intel Corporation
+ * Copyright (c) 2015, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,60 +31,29 @@
  */
 
 /*
- * obj.h -- internal definitions for obj module
+ * arena.h -- internal definitions for arena
  */
 
-#define	PMEMOBJ_LOG_PREFIX "libpmemobj"
-#define	PMEMOBJ_LOG_LEVEL_VAR "PMEMOBJ_LOG_LEVEL"
-#define	PMEMOBJ_LOG_FILE_VAR "PMEMOBJ_LOG_FILE"
-
-/* attributes of the obj memory pool format for the pool header */
-#define	OBJ_HDR_SIG "OBJPOOL"	/* must be 8 bytes including '\0' */
-#define	OBJ_FORMAT_MAJOR 1
-#define	OBJ_FORMAT_COMPAT 0x0000
-#define	OBJ_FORMAT_INCOMPAT 0x0000
-#define	OBJ_FORMAT_RO_COMPAT 0x0000
-
-#define MAX_TXOPS 100
-
-enum txop_type {
-	TXOP_TYPE_UNKNOWN,
-	TXOP_TYPE_ALLOC,
-	TXOP_TYPE_FREE,
-	TXOP_TYPE_SET,
-
-	TXOP_TYPE_MAX
+struct arena {
+	int associated_threads; /* number of threads using this arena */
+	pthread_mutex_t *lock;
+	int id; /* index in the pool->arenas array */
+	struct pmalloc_pool *pool;
+	struct arena_backend_operations *a_ops;
+	struct bucket *buckets[MAX_BUCKETS];
 };
 
-struct pmemobj_txop {
-	/* enum txop_type */ uint64_t type;
-	uint64_t addr;
-	uint64_t data;
-	uint64_t len;
+enum guard_type {
+	GUARD_TYPE_UNKNOWN,
+	GUARD_TYPE_MALLOC,
+	GUARD_TYPE_REALLOC,
+	GUARD_TYPE_FREE,
+
+	MAX_GUARD_TYPE
 };
 
-struct pmemobj_tx {
-	int committed;
-	POBJ(struct pmemobj_txop) txop[MAX_TXOPS];
-};
-
-struct pmemobjpool {
-	struct pool_hdr hdr;	/* memory pool header */
-
-	uint64_t root_offset;
-	POBJ(struct pmemobj_tx) tx;
-
-	/* root info for on-media format... */
-	char layout[PMEMOBJ_LAYOUT_MAX];
-
-	/* some run-time state, allocated out of memory pool... */
-	void *addr;		/* mapped region */
-	size_t size;		/* size of mapped region */
-	int is_pmem;		/* true if pool is PMEM */
-	int rdonly;		/* true if pool is opened read-only */
-	struct pmalloc_pool *pmp;
-
-
-	void *heap;
-};
-
+struct arena *arena_new(struct pmalloc_pool *p, int arena_id);
+void arena_delete(struct arena *a);
+bool arena_guard_up(struct arena *arena, uint64_t *ptr, enum guard_type type);
+struct bucket *arena_select_bucket(struct arena *arena, size_t size);
+bool arena_guard_down(struct arena *arena, uint64_t *ptr, enum guard_type type);

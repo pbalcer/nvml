@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, Intel Corporation
+ * Copyright (c) 2015, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,60 +31,27 @@
  */
 
 /*
- * obj.h -- internal definitions for obj module
+ * pool.h -- internal definitions for pmalloc pool
  */
 
-#define	PMEMOBJ_LOG_PREFIX "libpmemobj"
-#define	PMEMOBJ_LOG_LEVEL_VAR "PMEMOBJ_LOG_LEVEL"
-#define	PMEMOBJ_LOG_FILE_VAR "PMEMOBJ_LOG_FILE"
+#define	MAX_ARENAS 10
 
-/* attributes of the obj memory pool format for the pool header */
-#define	OBJ_HDR_SIG "OBJPOOL"	/* must be 8 bytes including '\0' */
-#define	OBJ_FORMAT_MAJOR 1
-#define	OBJ_FORMAT_COMPAT 0x0000
-#define	OBJ_FORMAT_INCOMPAT 0x0000
-#define	OBJ_FORMAT_RO_COMPAT 0x0000
+struct pmalloc_pool {
+	/*
+	 * Collection of structures that define the minimum unit sizes the
+	 * allocator currently supports. Each object can consist of several
+	 * units.
+	 */
+	struct bucket_class bucket_classes[MAX_BUCKETS];
 
-#define MAX_TXOPS 100
-
-enum txop_type {
-	TXOP_TYPE_UNKNOWN,
-	TXOP_TYPE_ALLOC,
-	TXOP_TYPE_FREE,
-	TXOP_TYPE_SET,
-
-	TXOP_TYPE_MAX
+	pthread_mutex_t *lock;
+	struct arena *arenas[MAX_ARENAS];
+	struct backend *backend;
+	struct bucket *buckets[MAX_BUCKETS];
+	struct pool_backend_operations *p_ops;
 };
 
-struct pmemobj_txop {
-	/* enum txop_type */ uint64_t type;
-	uint64_t addr;
-	uint64_t data;
-	uint64_t len;
-};
-
-struct pmemobj_tx {
-	int committed;
-	POBJ(struct pmemobj_txop) txop[MAX_TXOPS];
-};
-
-struct pmemobjpool {
-	struct pool_hdr hdr;	/* memory pool header */
-
-	uint64_t root_offset;
-	POBJ(struct pmemobj_tx) tx;
-
-	/* root info for on-media format... */
-	char layout[PMEMOBJ_LAYOUT_MAX];
-
-	/* some run-time state, allocated out of memory pool... */
-	void *addr;		/* mapped region */
-	size_t size;		/* size of mapped region */
-	int is_pmem;		/* true if pool is PMEM */
-	int rdonly;		/* true if pool is opened read-only */
-	struct pmalloc_pool *pmp;
-
-
-	void *heap;
-};
-
+struct pmalloc_pool *pool_new(void *ptr, size_t size, enum backend_type type);
+void pool_delete(struct pmalloc_pool *pool);
+struct arena *pool_select_arena(struct pmalloc_pool *p);
+bool pool_recycle_object(struct pmalloc_pool *pool, struct bucket_object *obj);

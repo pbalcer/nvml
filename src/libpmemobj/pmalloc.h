@@ -1,5 +1,5 @@
 /*
- * Copyright (c) 2014, Intel Corporation
+ * Copyright (c) 2015, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -31,60 +31,25 @@
  */
 
 /*
- * obj.h -- internal definitions for obj module
+ * pmalloc.h -- internal definitions for pmalloc module
  */
 
-#define	PMEMOBJ_LOG_PREFIX "libpmemobj"
-#define	PMEMOBJ_LOG_LEVEL_VAR "PMEMOBJ_LOG_LEVEL"
-#define	PMEMOBJ_LOG_FILE_VAR "PMEMOBJ_LOG_FILE"
+#define	NULL_OFFSET 0
 
-/* attributes of the obj memory pool format for the pool header */
-#define	OBJ_HDR_SIG "OBJPOOL"	/* must be 8 bytes including '\0' */
-#define	OBJ_FORMAT_MAJOR 1
-#define	OBJ_FORMAT_COMPAT 0x0000
-#define	OBJ_FORMAT_INCOMPAT 0x0000
-#define	OBJ_FORMAT_RO_COMPAT 0x0000
-
-#define MAX_TXOPS 100
-
-enum txop_type {
-	TXOP_TYPE_UNKNOWN,
-	TXOP_TYPE_ALLOC,
-	TXOP_TYPE_FREE,
-	TXOP_TYPE_SET,
-
-	TXOP_TYPE_MAX
+enum POOL_OPEN_FLAGS {
+	/* open the pool using a noop backend */
+	POOL_OPEN_FLAG_NOOP	=	0x0001
 };
 
-struct pmemobj_txop {
-	/* enum txop_type */ uint64_t type;
-	uint64_t addr;
-	uint64_t data;
-	uint64_t len;
+enum POOL_CHECK_FLAGS {
+	/* check the pool with a noop backend */
+	POOL_CHECK_FLAG_NOOP	=	0x0001
 };
 
-struct pmemobj_tx {
-	int committed;
-	POBJ(struct pmemobj_txop) txop[MAX_TXOPS];
-};
-
-struct pmemobjpool {
-	struct pool_hdr hdr;	/* memory pool header */
-
-	uint64_t root_offset;
-	POBJ(struct pmemobj_tx) tx;
-
-	/* root info for on-media format... */
-	char layout[PMEMOBJ_LAYOUT_MAX];
-
-	/* some run-time state, allocated out of memory pool... */
-	void *addr;		/* mapped region */
-	size_t size;		/* size of mapped region */
-	int is_pmem;		/* true if pool is PMEM */
-	int rdonly;		/* true if pool is opened read-only */
-	struct pmalloc_pool *pmp;
-
-
-	void *heap;
-};
-
+struct pmalloc_pool *pool_open(void *ptr, size_t size, int flags);
+bool pool_check(void *ptr, size_t size, int flags);
+void pool_close(struct pmalloc_pool *pool);
+void pmalloc(struct pmalloc_pool *p, uint64_t *ptr, size_t size);
+void pfree(struct pmalloc_pool *p, uint64_t *ptr);
+void prealloc(struct pmalloc_pool *p, uint64_t *ptr, size_t size);
+void *pdirect(struct pmalloc_pool *p, uint64_t ptr);
