@@ -87,7 +87,7 @@ pool_new(void *ptr, size_t size, enum backend_type type)
 		goto error_lock_init;
 	}
 
-	memset(pool->buckets, 0, sizeof (*pool->buckets) * MAX_BUCKETS);
+	memset(pool->buckets, 0, sizeof (pool->buckets));
 	pool->p_ops = pool->backend->p_ops;
 
 	return pool;

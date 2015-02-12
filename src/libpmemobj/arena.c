@@ -71,7 +71,7 @@ arena_new(struct pmalloc_pool *p, int arena_id)
 	arena->associated_threads = 0;
 	arena->pool = p;
 	arena->a_ops = p->backend->a_ops;
-	memset(arena->buckets, 0, sizeof (*arena->buckets) * MAX_BUCKETS);
+	memset(arena->buckets, 0, sizeof (arena->buckets));
 
 	return arena;
 error_lock_init:

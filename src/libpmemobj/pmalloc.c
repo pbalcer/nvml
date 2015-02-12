@@ -184,7 +184,7 @@ error_recycle_object:
 }
 
 /*
- * prealloc - resizes or reacuqires an object from the pool
+ * prealloc - resizes or acquires an object from the pool
  */
 void
 prealloc(struct pmalloc_pool *p, uint64_t *ptr, size_t size)
