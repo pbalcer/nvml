@@ -32,6 +32,34 @@
 
 /*
  * pmalloc.c -- implementation of pmalloc POSIX-like API
+ *
+ * The allocator is divided in two distinguishable and seprate parts:
+ * the frontend and the backend.
+ *
+ * The frontend manages the volatile state. It keeps track of the memory blocks
+ * and distributes those blocks in a threadsafe way through this API.
+ * The main structure that represents the allocator instance is pool, it's the
+ * object that is requried for all the functions apart from the open and check.
+ * But the most essential structure that holds the memory blocks information
+ * is a bucket, each instance has a specific class that describes the size range
+ * of a memory blocks this bucket can store the information of.
+ * The primary bucket instances are stored in the pool and the secondary buckets
+ * present in the arenas - which are used to improve thread scaling by
+ * decreasing lock contention all throughout the allocation/free process.
+ * The difference between the primary and secondary buckets is that the former
+ * actually calls the backend to get the memory blocks and then distribute them
+ * across the arenas.
+ *
+ * The backend provides the facilities to the frontend with neccessery to get
+ * the actual memory addresses from the underlying operating system. Currently
+ * the only usable backend is a persistent one which takes an address of a
+ * memory-mapped file that resides on persistent memory aware file system and
+ * guarantees that all the backend operations are power-fail safe and even
+ * if operations are interrupted the backend file is always consistent.
+ *
+ * The frontend and backend both use a common bucket_object structure which is
+ * uniquely identified by either data offset it carries or a unique key assigned
+ * by the backend.
  */
 
 #include <stdint.h>
@@ -39,6 +67,7 @@
 #include <stdbool.h>
 #include <assert.h>
 #include <sys/param.h>
+#include <inttypes.h>
 #include "pmalloc.h"
 #include "out.h"
 #include "util.h"
@@ -51,22 +80,14 @@
  * pool_open -- opens a new persistent pool
  */
 struct pmalloc_pool *
-pool_open(void *ptr, size_t size)
+pool_open(void *ptr, size_t size, int flags)
 {
-	LOG(3, "popen");
+	LOG(3, "ptr %p size %zu flags %d", ptr, size, flags);
 
-	return pool_new(ptr, size, BACKEND_PERSISTENT);
-}
+	enum backend_type btype = flags & POOL_OPEN_FLAG_NOOP ?
+		BACKEND_NOOP : BACKEND_PERSISTENT;
 
-/*
- * pool_open_noop -- opens a new pool with no-op backend
- */
-struct pmalloc_pool *
-pool_open_noop(void *ptr, size_t size)
-{
-	LOG(3, "popen_noop");
-
-	return pool_new(ptr, size, BACKEND_NOOP);
+	return pool_new(ptr, size, btype);
 }
 
 /*
@@ -75,31 +96,55 @@ pool_open_noop(void *ptr, size_t size)
 void
 pool_close(struct pmalloc_pool *pool)
 {
-	LOG(3, "pclose");
+	LOG(3, "pool %p", pool);
 
 	pool_delete(pool);
 }
 
 /*
- * alloc_from_bucket -- (internal) allocate an object from bucket
+ * pool_check -- checks consistency of the pool backend
+ */
+bool
+pool_check(void *ptr, size_t size, int flags)
+{
+	LOG(3, "ptr %p size %zu flags %d", ptr, size, flags);
+
+	enum backend_type btype = flags & POOL_CHECK_FLAG_NOOP ?
+		BACKEND_NOOP : BACKEND_PERSISTENT;
+
+	return backend_consistency_check(btype, ptr, size);
+}
+
+/*
+ * alloc_from_bucket -- (internal) allocates an object from bucket
  */
 static void
 alloc_from_bucket(struct arena *arena, struct bucket *bucket,
-	uint64_t *ptr, size_t size)
+	struct bucket_object *obj, uint64_t *ptr, size_t size)
 {
-	uint64_t units = bucket_calc_units(bucket, size);
+	/*
+	 * Each bucket holds collection of memory blocks whose sizes are a
+	 * multiplication of the buckets class unit size, and each allocation
+	 * can consist of several of those units. For example, if the bucket
+	 * class unit size is 4 kilobytes and the allocations requires
+	 * 11 kilobytes of free space than the units count is equal to 3 and
+	 * the allocated object actually has 12 kilobytes.
+	 */
+	uint32_t units = bucket_calc_units(bucket, size);
 
 	/*
 	 * Failure to find free object would mean that arena_select_bucket
 	 * didn't work properly.
 	 */
-	struct bucket_object *obj = bucket_find_object(bucket, units);
-	ASSERT(obj != NULL);
+	if (!bucket_get_object(bucket, obj, units)) {
+		LOG(4, "Bucket OOM");
+		return;
+	}
 
 	arena->a_ops->set_alloc_ptr(arena, ptr, obj->data_offset);
 
-	if (!bucket_remove_object(bucket, obj)) {
-		LOG(4, "Failed to remove object from bucket");
+	if (!bucket_mark_allocated(bucket, obj)) {
+		LOG(4, "Failed to mark object as allocated");
 		return;
 	}
 }
@@ -113,7 +158,8 @@ alloc_from_bucket(struct arena *arena, struct bucket *bucket,
 void
 pmalloc(struct pmalloc_pool *p, uint64_t *ptr, size_t size)
 {
-	LOG(3, "pmalloc");
+	LOG(3, "pool %p ptr %p size %zu", p, ptr, size);
+
 	ASSERT(*ptr == NULL_OFFSET);
 
 	struct arena *arena = pool_select_arena(p);
@@ -127,13 +173,19 @@ pmalloc(struct pmalloc_pool *p, uint64_t *ptr, size_t size)
 		return;
 	}
 
+	/*
+	 * Buckets are selected in a way that minimizes the overall
+	 * memory fragmentation and wasted space. In practise this means that
+	 * the bucket with unit sizes that most closely matches the allocation.
+	 */
 	struct bucket *bucket = arena_select_bucket(arena, size);
 	if (bucket == NULL) {
 		LOG(4, "Failed to select a bucket, OOM");
 		goto error_select_bucket;
 	}
 
-	alloc_from_bucket(arena, bucket, ptr, size);
+	struct bucket_object obj = {0};
+	alloc_from_bucket(arena, bucket, &obj, ptr, size);
 
 error_select_bucket:
 	if (!arena_guard_down(arena, ptr, GUARD_TYPE_MALLOC)) {
@@ -151,7 +203,8 @@ error_select_bucket:
 void
 pfree(struct pmalloc_pool *p, uint64_t *ptr)
 {
-	LOG(3, "pfree");
+	LOG(3, "pool %p ptr %p", p, ptr);
+
 	if (*ptr == NULL_OFFSET)
 		return;
 
@@ -162,13 +215,17 @@ pfree(struct pmalloc_pool *p, uint64_t *ptr)
 	}
 
 	struct bucket_object obj = {0};
-	bucket_object_init(&obj, p, *ptr);
+	if (!bucket_object_locate(&obj, p, *ptr)) {
+		LOG(4, "Object already free (double free?)");
+		return;
+	}
 
 	if (!arena_guard_up(arena, ptr, GUARD_TYPE_FREE)) {
 		LOG(4, "Failed to acquire arena guard");
 		return;
 	}
 
+	/* XXX recycle objects back to their respective arena buckets */
 	if (!pool_recycle_object(p, &obj)) {
 		LOG(4, "Failed to recycle object!");
 		goto error_recycle_object;
@@ -189,7 +246,8 @@ error_recycle_object:
 void
 prealloc(struct pmalloc_pool *p, uint64_t *ptr, size_t size)
 {
-	LOG(3, "prealloc");
+	/* XXX change the interface to something more 'failure-friendly' */
+	LOG(3, "pool %p ptr %p size %zu", p, ptr, size);
 
 	if (size == 0) {
 		pfree(p, ptr);
@@ -202,7 +260,7 @@ prealloc(struct pmalloc_pool *p, uint64_t *ptr, size_t size)
 	}
 
 	struct bucket_object obj = {0};
-	bucket_object_init(&obj, p, *ptr);
+	bucket_object_locate(&obj, p, *ptr);
 
 	if (obj.real_size >= size) {
 		/* no-op */
@@ -233,15 +291,34 @@ prealloc(struct pmalloc_pool *p, uint64_t *ptr, size_t size)
 	 * result in a short period of time in which there's no valid
 	 * object stored in the ptr.
 	 */
-	alloc_from_bucket(arena, bucket, ptr, size);
-	/* XXX memset */
+	struct bucket_object new_obj = {0};
+	alloc_from_bucket(arena, bucket, &new_obj, ptr, size);
+	if (new_obj.size_idx == 0) { /* new allocation successful */
+		LOG(3, "Failed to allocate a bigger object");
+		goto error_new_alloc;
+	}
+
+	p->p_ops->copy_content(p, &new_obj, &obj);
 	if (!pool_recycle_object(p, &obj)) {
 		LOG(4, "Failed to recycle object!");
 	}
 
+error_new_alloc:
 error_select_bucket:
 	if (!arena_guard_down(arena, ptr, GUARD_TYPE_REALLOC)) {
 		LOG(4, "Failed to release arena guard");
 		return;
 	}
+}
+
+/*
+ * pdirect -- returns a direct memory pointer based on the ptr offset
+ */
+void *
+pdirect(struct pmalloc_pool *p, uint64_t ptr)
+{
+	LOG(3, "pool %p ptr %"PRIu64"", p, ptr);
+
+	ASSERT(p != NULL);
+	return p->p_ops->get_direct(p, ptr);
 }

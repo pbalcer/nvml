@@ -32,6 +32,10 @@
 
 /*
  * bucket.c -- implementation of bucket
+ *
+ * Bucket is the structure that stores and manages objects. Besides the obvious
+ * interfaces to retrieve or store the objects, it acts as a intermediary
+ * between the frontend API and the backend in all things related to objects.
  */
 
 #include <stdint.h>
@@ -41,6 +45,7 @@
 #include "arena.h"
 #include "backend.h"
 #include "pool.h"
+#include "container.h"
 #include "out.h"
 #include "util.h"
 
@@ -60,8 +65,7 @@ get_bucket_class_id_by_size(struct pmalloc_pool *p, size_t size)
 int
 bucket_register_class(struct pmalloc_pool *p, struct bucket_class c)
 {
-	int i;
-	for (i = 0; i < MAX_BUCKETS; ++i) {
+	for (int i = 0; i < MAX_BUCKETS; ++i) {
 		if (p->bucket_classes[i].unit_size == 0) {
 			p->bucket_classes[i] = c;
 			return i;
@@ -79,8 +83,9 @@ bucket_register_class(struct pmalloc_pool *p, struct bucket_class c)
 bool
 bucket_unregister_class(struct pmalloc_pool *p, int class_id)
 {
-	if (p->bucket_classes[class_id].unit_size == 0)
+	if (p->bucket_classes[class_id].unit_size == 0) {
 		return false;
+	}
 
 	struct bucket_class empty = {0};
 	p->bucket_classes[class_id] = empty;
@@ -94,16 +99,21 @@ bucket_unregister_class(struct pmalloc_pool *p, int class_id)
 struct bucket *
 bucket_new(struct pmalloc_pool *p, int class_id)
 {
-	struct bucket *bucket = Malloc(sizeof (*bucket));
-	if (bucket == NULL) {
-		goto error_bucket_malloc;
-	}
-
 	/*
 	 * This would mean the class is not registered, which should never
 	 * happen assuming correct implementation.
 	 */
 	ASSERT(p->bucket_classes[class_id].unit_size != 0);
+
+	struct bucket *bucket = Malloc(sizeof (*bucket));
+	if (bucket == NULL) {
+		goto error_bucket_malloc;
+	}
+
+	bucket->objects = container_new(DEFAULT_BUCKET_CONTAINER_TYPE);
+	if (bucket->objects == NULL) {
+		goto error_container_new;
+	}
 
 	bucket->class = p->bucket_classes[class_id];
 	bucket->pool = p;
@@ -111,6 +121,8 @@ bucket_new(struct pmalloc_pool *p, int class_id)
 
 	return bucket;
 
+error_container_new:
+	Free(bucket);
 error_bucket_malloc:
 	return NULL;
 }
@@ -121,6 +133,7 @@ error_bucket_malloc:
 void
 bucket_delete(struct bucket *bucket)
 {
+	container_delete(bucket->objects);
 	Free(bucket);
 }
 
@@ -138,51 +151,73 @@ bucket_transfer_objects(struct bucket *bucket)
 }
 
 /*
- * bucket_object_init -- initializes a bucket object based on the pointer
+ * bucket_object_locate -- locates a bucket object based on the pointer
  */
-void
-bucket_object_init(struct bucket_object *obj, struct pmalloc_pool *p,
+bool
+bucket_object_locate(struct bucket_object *obj, struct pmalloc_pool *p,
 	uint64_t ptr)
 {
-	/* XXX */
+	return p->p_ops->locate_bucket_obj(p, obj, ptr);
 }
 
 /*
  * bucket_calc_units -- calculates the number of units needed for size
  */
-uint64_t
+uint32_t
 bucket_calc_units(struct bucket *bucket, size_t size)
 {
-	/* XXX */
-	return 0;
+	return ((size - 1) / bucket->class.unit_size);
 }
 
-/*
- * bucket_find_object -- returns an object with the required unit size
- */
-struct bucket_object *
-bucket_find_object(struct bucket *bucket, uint64_t units)
-{
-	/* XXX */
-	return NULL;
-}
+#define	OBJ_KEY(u, s) ((uint64_t)(u) << 32 | (s))
 
 /*
- * bucket_remove_object -- removes object from the bucket
+ * bucket_get_object -- init an object with the required unit size
  */
 bool
-bucket_remove_object(struct bucket *bucket, struct bucket_object *obj)
+bucket_get_object(struct bucket *bucket, struct bucket_object *obj,
+	uint32_t units)
 {
-	/* XXX */
+	obj->unique_id = bucket->objects->c_ops->get_rm_ge(bucket->objects,
+		OBJ_KEY(0, units));
+
+	obj->size_idx = units;
+
+	if (obj->unique_id == NULL_VAL) {
+		return false;
+	}
+
+	bucket->b_ops->init_bucket_obj(bucket, obj);
+
+	if (obj->size_idx >= units) {
+		return true;
+	}
+
+	/* There's really no object of this size, put the max obj back. */
+	bucket_add_object(bucket, obj);
+
 	return false;
+}
+
+/*
+ * bucket_mark_allocated -- marks underlying memory block as allocated
+ */
+bool
+bucket_mark_allocated(struct bucket *bucket, struct bucket_object *obj)
+{
+	return bucket->b_ops->set_bucket_obj_state(bucket, obj,
+		BUCKET_OBJ_STATE_ALLOCATED);
 }
 
 /*
  * bucket_add_object -- adds object to the bucket
+ *
+ * The memory block this object represents must be already freed, otherwise a
+ * double allocation of the same memory may occur.
  */
 bool
 bucket_add_object(struct bucket *bucket, struct bucket_object *obj)
 {
-	/* XXX */
-	return false;
+	return bucket->objects->c_ops->add(bucket->objects,
+		OBJ_KEY(obj->unique_id, obj->size_idx), obj->unique_id);
 }

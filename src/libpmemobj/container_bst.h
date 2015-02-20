@@ -31,29 +31,22 @@
  */
 
 /*
- * arena.h -- internal definitions for arena
+ * container_bst.c -- internal definitions for bst container
  */
 
-struct arena {
-	int associated_threads; /* number of threads using this arena */
+struct bst_node {
+	val_t value;
+	uint64_t key;
+	struct bst_node *parent;
+	struct bst_node *left;
+	struct bst_node *right;
+};
+
+struct container_bst {
+	struct container super;
 	pthread_mutex_t *lock;
-	int id; /* index in the pool->arenas array */
-	struct pmalloc_pool *pool;
-	struct arena_backend_operations *a_ops;
-	struct bucket *buckets[MAX_BUCKETS];
+	struct bst_node *root;
 };
 
-enum guard_type {
-	GUARD_TYPE_UNKNOWN,
-	GUARD_TYPE_MALLOC,
-	GUARD_TYPE_REALLOC,
-	GUARD_TYPE_FREE,
-
-	MAX_GUARD_TYPE
-};
-
-struct arena *arena_new(struct pmalloc_pool *p, int arena_id);
-void arena_delete(struct arena *a);
-bool arena_guard_up(struct arena *arena, uint64_t *ptr, enum guard_type type);
-struct bucket *arena_select_bucket(struct arena *arena, size_t size);
-bool arena_guard_down(struct arena *arena, uint64_t *ptr, enum guard_type type);
+struct container *container_bst_new();
+void container_bst_delete(struct container *container);

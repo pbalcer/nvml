@@ -36,9 +36,20 @@
 
 #define	NULL_OFFSET 0
 
-struct pmalloc_pool *pool_open(void *ptr, size_t size);
-struct pmalloc_pool *pool_open_noop(void *ptr, size_t size);
+enum POOL_OPEN_FLAGS {
+	/* open the pool using a noop backend */
+	POOL_OPEN_FLAG_NOOP	=	0x0001
+};
+
+enum POOL_CHECK_FLAGS {
+	/* check the pool with a noop backend */
+	POOL_CHECK_FLAG_NOOP	=	0x0001
+};
+
+struct pmalloc_pool *pool_open(void *ptr, size_t size, int flags);
+bool pool_check(void *ptr, size_t size, int flags);
 void pool_close(struct pmalloc_pool *pool);
 void pmalloc(struct pmalloc_pool *p, uint64_t *ptr, size_t size);
 void pfree(struct pmalloc_pool *p, uint64_t *ptr);
 void prealloc(struct pmalloc_pool *p, uint64_t *ptr, size_t size);
+void *pdirect(struct pmalloc_pool *p, uint64_t ptr);

@@ -31,81 +31,52 @@
  */
 
 /*
- * backend.c -- implementation of backend
+ * container.c -- implementation of container interface
+ *
+ * Container is the structure on which the entire performance of the allocator
+ * relies on - the faster the implementation is the better the overall speed of
+ * frontend interface functions.
+ * This isn't a fully blown universal collection API but rather a specifically
+ * tailored to fit one purpose - to store and find memory blocks of a given
+ * size.
  */
 
-#include <stdint.h>
 #include <stdbool.h>
+#include <stdint.h>
 #include <stdlib.h>
-#include "bucket.h"
-#include "arena.h"
-#include "backend.h"
-#include "backend_persistent.h"
-#include "backend_noop.h"
-#include "pool.h"
-#include "util.h"
+#include "container.h"
+#include "container_noop.h"
+#include "container_bst.h"
 #include "out.h"
+#include "util.h"
 
-static struct backend *(*backend_open_by_type[MAX_BACKEND])
-	(void *ptr, size_t size) = {
-	backend_noop_open,
-	backend_persistent_open
+static struct container *(*container_new_by_type[MAX_CONTAINER_TYPE])() = {
+	container_noop_new,
+	container_bst_new
 };
 
-static void (*backend_close_by_type[MAX_BACKEND])
-	(struct backend *b) = {
-	backend_noop_close,
-	backend_persistent_close
+static void (*container_delete_by_type[MAX_CONTAINER_TYPE])() = {
+	container_noop_delete,
+	container_bst_delete
 };
 
-static bool (*backend_check_by_type[MAX_BACKEND])
-	(void *ptr, size_t size) = {
-	backend_noop_consistency_check,
-	backend_persistent_consistency_check
-};
-
-/*
- * backend_open -- opens a backend of desired type
- */
-struct backend *
-backend_open(enum backend_type type, void *ptr, size_t size)
+struct container *
+container_new(enum container_type type)
 {
-	ASSERT(type < MAX_BACKEND);
-	return backend_open_by_type[type](ptr, size);
+	return container_new_by_type[type]();
 }
 
-/*
- * backend_close -- closes a backend based on its type
- */
 void
-backend_close(struct backend *backend)
+container_delete(struct container *container)
 {
-	ASSERT(backend->type < MAX_BACKEND);
-	backend_close_by_type[backend->type](backend);
+	ASSERT(container->type < MAX_CONTAINER_TYPE);
+	container_delete_by_type[container->type](container);
 }
 
-/*
- * backend_init -- initializes a backend
- */
 void
-backend_init(struct backend *backend, enum backend_type type,
-	struct bucket_backend_operations *b_ops,
-	struct arena_backend_operations *a_ops,
-	struct pool_backend_operations *p_ops)
+container_init(struct container *container, enum container_type type,
+	struct container_operations *c_ops)
 {
-	backend->type = type;
-
-	backend->b_ops = b_ops;
-	backend->a_ops = a_ops;
-	backend->p_ops = p_ops;
-}
-
-/*
- * backend_consistency_check -- checks consistency of the backend
- */
-bool
-backend_consistency_check(enum backend_type type,
-	void *ptr, size_t size)
-{
-	return backend_check_by_type[type](ptr, size);
+	container->type = type;
+	container->c_ops = c_ops;
 }

@@ -41,6 +41,7 @@
 #include "bucket.h"
 #include "arena.h"
 #include "backend.h"
+#include "backend_noop.h"
 #include "pool.h"
 #include "util.h"
 
@@ -87,6 +88,50 @@ void test_bucket_create_delete() {
 	bucket_delete(b);
 }
 
+#define	MOCK_SIZE_IDX 2
+#define	MOCK_UNIQUE_ID 123
+
+void
+test_bucket_add_get_obj()
+{
+	struct bucket_class mock_class_0 = {
+		.unit_size = MOCK_BUCKET_UNIT_SIZE
+	};
+	struct bucket_backend_operations noop_bucket_ops = {
+		.init_bucket_obj = noop_init_bucket_obj,
+		.set_bucket_obj_state = noop_set_bucket_obj_state
+	};
+	struct backend mock_backend = {
+		.b_ops = &noop_bucket_ops
+	};
+
+	struct pmalloc_pool mock_pool = {
+		.backend = &mock_backend,
+		.bucket_classes = {{0}}
+	};
+	int class_id = bucket_register_class(&mock_pool, mock_class_0);
+	struct bucket *b = bucket_new(&mock_pool, class_id);
+
+	struct bucket_object mock_obj = {
+		.size_idx = MOCK_SIZE_IDX,
+		.unique_id = MOCK_UNIQUE_ID
+	};
+
+	ASSERT(bucket_add_object(b, &mock_obj));
+
+	struct bucket_object found_obj;
+
+	ASSERT(bucket_get_object(b, &found_obj, MOCK_SIZE_IDX - 1));
+	ASSERT(found_obj.unique_id == MOCK_UNIQUE_ID);
+
+	struct bucket_object n_found_obj;
+
+	ASSERT(bucket_get_object(b, &n_found_obj, MOCK_SIZE_IDX + 1) == false);
+	ASSERT(n_found_obj.unique_id != MOCK_UNIQUE_ID);
+
+	bucket_delete(b);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -94,6 +139,7 @@ main(int argc, char *argv[])
 
 	test_bucket_register_class();
 	test_bucket_create_delete();
+	test_bucket_add_get_obj();
 
 	DONE(NULL);
 }

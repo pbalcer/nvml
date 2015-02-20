@@ -43,6 +43,7 @@
 #include "backend.h"
 #include "pool.h"
 #include "util.h"
+#include "backend_noop.h"
 
 FUNC_REAL_DECL(arena_new, struct arena *, struct pmalloc_pool *p, int arena_id)
 
@@ -80,11 +81,26 @@ arena_test_create_delete()
 FUNC_WILL_RETURN(pthread_mutex_lock, 0)
 FUNC_WILL_RETURN(pthread_mutex_unlock, 0)
 
+FUNC_WILL_RETURN(mock_set_guard, 0)
+FUNC_WILL_RETURN(mock_clear_guard, 0)
+
+void
+mock_set_guard(struct arena *arena, enum guard_type type, uint64_t *ptr)
+{
+	ASSERT(type == GUARD_TYPE_MALLOC);
+	ASSERT(ptr == NULL);
+}
+
 void
 arena_test_guards()
 {
+	struct arena_backend_operations noop_arena_ops = {
+		.set_guard = mock_set_guard,
+		.clear_guard = noop_clear_guard
+	};
 	struct arena mock_arena = {
-		.lock = MOCK_ARENA_LOCK
+		.lock = MOCK_ARENA_LOCK,
+		.a_ops = &noop_arena_ops
 	};
 	arena_guard_up(&mock_arena, NULL, GUARD_TYPE_MALLOC);
 	arena_guard_down(&mock_arena, NULL, GUARD_TYPE_MALLOC);

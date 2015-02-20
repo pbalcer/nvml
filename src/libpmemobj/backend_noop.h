@@ -40,6 +40,18 @@ struct backend_noop {
 
 struct backend *backend_noop_open(void *ptr, size_t size);
 void backend_noop_close(struct backend *backend);
+bool backend_noop_consistency_check(void *ptr, size_t size);
 
-void noop_set_alloc_ptr(struct arena *arena, uint64_t *ptr,
-	uint64_t value);
+void noop_bucket_classes(struct pmalloc_pool *pool);
+void noop_fill_buckets(struct pmalloc_pool *pool);
+void noop_set_alloc_ptr(struct arena *arena, uint64_t *ptr, uint64_t value);
+void noop_init_bucket_obj(struct bucket *bucket, struct bucket_object *obj);
+bool noop_set_bucket_obj_state(struct bucket *bucket,
+	struct bucket_object *obj, enum bucket_obj_state state);
+bool noop_locate_bucket_obj(struct pmalloc_pool *pool,
+	struct bucket_object *obj, uint64_t data_offset);
+void *noop_get_direct(struct pmalloc_pool *pool, uint64_t ptr);
+void noop_copy_content(struct pmalloc_pool *pool, struct bucket_object *dest,
+	struct bucket_object *src);
+void noop_set_guard(struct arena *arena, enum guard_type type, uint64_t *ptr);
+void noop_clear_guard(struct arena *arena);

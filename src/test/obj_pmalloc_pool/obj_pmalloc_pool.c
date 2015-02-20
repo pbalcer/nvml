@@ -45,17 +45,20 @@
 #include "backend_noop.h"
 #include "util.h"
 
-struct pool_backend_operations mock_pool_ops;
+struct pool_backend_operations mock_pool_ops = {
+	.fill_buckets = noop_fill_buckets,
+	.create_bucket_classes = noop_bucket_classes
+};
 
 struct backend mock_backend = {
 	.type = BACKEND_NOOP,
 	.p_ops = &mock_pool_ops
 };
 
-FUNC_WILL_RETURN(pthread_mutex_init, 0);
-FUNC_WILL_RETURN(pthread_mutex_destroy, 0);
+FUNC_WILL_RETURN(pthread_mutex_init, 0)
+FUNC_WILL_RETURN(pthread_mutex_destroy, 0)
 FUNC_WILL_RETURN(backend_noop_open, &mock_backend)
-FUNC_WILL_RETURN(backend_noop_close, NULL);
+FUNC_WILL_RETURN(backend_noop_close, NULL)
 
 void
 pool_test_create_delete()
@@ -67,10 +70,16 @@ pool_test_create_delete()
 	pool_delete(p);
 }
 
-struct bucket mock_bucket;
+struct bucket_backend_operations mock_bucket_ops = {
+	.set_bucket_obj_state = noop_set_bucket_obj_state
+};
+
+struct bucket mock_bucket = {
+	.b_ops = &mock_bucket_ops
+};
 struct bucket_object mock_object;
 
-FUNC_WILL_RETURN(get_bucket_class_id_by_size, 0);
+FUNC_WILL_RETURN(get_bucket_class_id_by_size, 0)
 FUNC_WILL_RETURN(bucket_new, &mock_bucket)
 
 FUNC_WRAP_BEGIN(bucket_add_object, bool, struct bucket *bucket,
@@ -85,7 +94,8 @@ pool_test_recycle_object()
 	struct pmalloc_pool mock_pool = {
 		.buckets = {NULL}
 	};
-	assert(pool_recycle_object(&mock_pool, &mock_object));
+	ASSERT(pool_recycle_object(&mock_pool, &mock_object));
+	ASSERT(mock_pool.buckets[0] == &mock_bucket);
 }
 
 int

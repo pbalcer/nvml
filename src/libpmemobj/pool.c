@@ -32,6 +32,11 @@
 
 /*
  * pool.c -- implementation of pmalloc pool
+ *
+ * The pool manages the entire volatile state of the allocator and stores the
+ * backend instance. It serves as a primary container for objects aswell as
+ * provides the means for the frontend interface to select an appropriate arena
+ * for the thread.
  */
 
 #include <stdint.h>
@@ -45,11 +50,31 @@
 #include "arena.h"
 #include "backend.h"
 #include "pool.h"
-
-__thread int arena_id = -1;
+#include "container.h"
 
 /*
- * pool_new -- allocate and initialize new pool object
+ * This variable is used to quickly select an arena for the thread, it is
+ * shared between pools so the distribution of arenas may not always be ideal
+ * for each pool.
+ */
+static __thread int arena_id = -1;
+
+/*
+ * create_default_buckets -- (internal) creates pool bucket for each class
+ */
+static void
+create_default_buckets(struct pmalloc_pool *p)
+{
+	for (int i = 0; i < MAX_BUCKETS; ++i) {
+		if (p->bucket_classes[i].unit_size != 0) {
+			ASSERT(p->buckets[i] == NULL);
+			p->buckets[i] = bucket_new(p, i);
+		}
+	}
+}
+
+/*
+ * pool_new -- allocates and initializes new pool object
  */
 struct pmalloc_pool *
 pool_new(void *ptr, size_t size, enum backend_type type)
@@ -73,8 +98,17 @@ pool_new(void *ptr, size_t size, enum backend_type type)
 		goto error_lock_init;
 	}
 
+	memset(pool->bucket_classes, 0, sizeof (pool->bucket_classes));
 	memset(pool->buckets, 0, sizeof (pool->buckets));
+	memset(pool->arenas, 0, sizeof (pool->arenas));
+
 	pool->p_ops = pool->backend->p_ops;
+
+	pool->p_ops->create_bucket_classes(pool);
+
+	create_default_buckets(pool);
+
+	pool->p_ops->fill_buckets(pool);
 
 	return pool;
 
@@ -89,7 +123,7 @@ error_pool_malloc:
 }
 
 /*
- * pool_delete -- deinitialize and free pool object
+ * pool_delete -- deinitializes and frees pool object
  */
 void
 pool_delete(struct pmalloc_pool *p)
@@ -138,7 +172,9 @@ select_arena_id(struct pmalloc_pool *p)
 }
 
 /*
- * select_thread_arena_slow -- (internal) slow path of arena selection
+ * select_thread_arena_slow --
+ * (internal) selects an arena from the pool which hopefully will provide the
+ * least lock contention.
  */
 static struct arena *
 select_thread_arena_slow(struct pmalloc_pool *p)
@@ -169,7 +205,7 @@ error_arena_new:
 }
 
 /*
- * pool_select_arena -- select an arena associated with current thread
+ * pool_select_arena -- selects an arena associated with current thread
  */
 struct arena *
 pool_select_arena(struct pmalloc_pool *p)
@@ -190,6 +226,13 @@ pool_recycle_object(struct pmalloc_pool *p, struct bucket_object *obj)
 		if ((p->buckets[class_id] = bucket_new(p, class_id)) == NULL)
 			return false;
 	}
+	struct bucket *b = p->buckets[class_id];
 
-	return bucket_add_object(p->buckets[class_id], obj);
+	if (!b->b_ops->set_bucket_obj_state(b, obj, BUCKET_OBJ_STATE_FREE))
+		return false;
+
+	if (obj->unique_id != NULL_VAL && !bucket_add_object(b, obj))
+		return false;
+
+	return true;
 }

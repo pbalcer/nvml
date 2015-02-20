@@ -34,29 +34,43 @@
  * bucket.h -- internal definitions for bucket
  */
 
+#define	DEFAULT_BUCKET_CONTAINER_TYPE CONTAINER_BINARY_SEARCH_TREE
+
+/*
+ * Arbitrary hard limit, it is hard to imagine ever exceeding this number
+ * because more bucket classes means worse fragmentation and 1024 is plenty
+ * already.
+ */
 #define	MAX_BUCKETS 1024
 
 struct bucket_object {
-	uint64_t real_size;
-	uint64_t data_offset;
+	uint64_t real_size; /* size in bytes */
+	uint64_t data_offset; /* offset of data relative to the memory pool */
+	uint32_t size_idx; /* bucket units */
+	uint32_t unique_id; /* backend picks this */
 };
 
 struct bucket_class {
-	int unit_size;
+	int unit_size; /* Number of bytes in a single unit of memory */
 };
 
 struct bucket {
+	/*
+	 * Each bucket has its own copy of the class because those stored in
+	 * the pool can change in runtime due to fragmentation optimizations.
+	 */
 	struct bucket_class class;
 	struct pmalloc_pool *pool;
 	struct bucket_backend_operations *b_ops;
+	struct container *objects;
 };
 
 struct bucket *bucket_new(struct pmalloc_pool *p, int class_id);
 void bucket_delete(struct bucket *bucket);
-uint64_t bucket_calc_units(struct bucket *bucket, size_t size);
-struct bucket_object *bucket_find_object(struct bucket *bucket,
-	uint64_t units);
-bool bucket_remove_object(struct bucket *bucket, struct bucket_object *obj);
+uint32_t bucket_calc_units(struct bucket *bucket, size_t size);
+bool bucket_get_object(struct bucket *bucket, struct bucket_object *obj,
+	uint32_t units);
+bool bucket_mark_allocated(struct bucket *bucket, struct bucket_object *obj);
 bool bucket_add_object(struct bucket *bucket, struct bucket_object *obj);
 int get_bucket_class_id_by_size(struct pmalloc_pool *p, size_t size);
 int bucket_register_class(struct pmalloc_pool *p, struct bucket_class c);
@@ -65,5 +79,5 @@ bool bucket_unregister_class(struct pmalloc_pool *p, int class_id);
 /* NULL-terminated array */
 struct bucket_object **bucket_transfer_objects(struct bucket *bucket);
 
-void bucket_object_init(struct bucket_object *obj, struct pmalloc_pool *p,
+bool bucket_object_locate(struct bucket_object *obj, struct pmalloc_pool *p,
 	uint64_t ptr);

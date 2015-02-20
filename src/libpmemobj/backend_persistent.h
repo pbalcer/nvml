@@ -35,12 +35,19 @@
  */
 
 typedef void (*persist_func)(void *addr, size_t len);
+typedef void *(*pmemcpy_func)(void *dest, void *src, size_t len);
+typedef void *(*pmemset_func)(void *dest, int c, size_t len);
 
 #define	PERSISTENT_BACKEND_MAJOR 1
 #define	PERSISTENT_BACKEND_MINOR 0
 
 #define	MAX_INFO_SLOT 1024
-#define	MAX_CHUNK 10000L
+
+/*
+ * This implementation stores chunk indexes on a 16bit unsigned integer,
+ * hence the limit, it's still plenty.
+ */
+#define	MAX_CHUNK 65535L
 #define	CHUNKSIZE (1024 * 256)
 #define	POOL_SIGNATURE_LEN 16
 #define	POOL_SIGNATURE "MEMORY_POOL_HDR\0"
@@ -55,16 +62,17 @@ enum pool_flag {
 	POOL_FLAG_LAZY_LOAD		=	0x0008,
 };
 
+enum chunk_flag {
+	CHUNK_FLAG_USED			=	0x0001,
+	CHUNK_FLAG_ZEROED		=	0x0002
+};
+
 enum pool_state {
 	POOL_STATE_UNKNOWN,
 	POOL_STATE_OPEN,
 	POOL_STATE_CLOSED,
-	MAX_POOL_STATE
-};
 
-enum chunk_flag {
-	CHUNK_FLAG_USED			=	0x0001,
-	CHUNK_FLAG_ZEROED		=	0x0002
+	MAX_POOL_STATE
 };
 
 enum chunk_type {
@@ -72,6 +80,7 @@ enum chunk_type {
 	CHUNK_TYPE_BASE,
 	CHUNK_TYPE_RUN,
 	CHUNK_TYPE_BITMAP,
+
 	MAX_CHUNK_TYPE
 };
 
@@ -80,20 +89,26 @@ enum info_slot_type {
 	INFO_SLOT_TYPE_ALLOC,
 	INFO_SLOT_TYPE_REALLOC,
 	INFO_SLOT_TYPE_FREE,
+
 	MAX_INFO_SLOT_TYPE
 };
 
 struct backend_pool_header {
 	char signature[POOL_SIGNATURE_LEN];
-	uint32_t flags;
-	uint32_t state;
+	uint32_t flags; /* enum pool_flag */
+	uint32_t state; /* enum pool_state */
 	uint64_t major;
 	uint64_t minor;
 	uint64_t size;
-	uint64_t chunk_size;
+	uint64_t chunk_size; /* size in bytes */
 	uint64_t chunks_per_zone;
 	char reserved[952];
 	uint64_t checksum;
+};
+
+struct backend_info_slot {
+	uint32_t type;  /* enum info_slot_type */
+	char data[INFO_SLOT_DATA_SIZE]; /* 'union' of slot_* structures */
 };
 
 struct backend_info_slot_alloc {
@@ -118,13 +133,8 @@ struct backend_info_slot_free {
 	uint64_t reserved_e[2];
 };
 
-struct backend_info_slot {
-	uint32_t type;
-	char data[INFO_SLOT_DATA_SIZE];
-};
-
 struct backend_chunk_header {
-	uint32_t magic;
+	uint32_t magic; /* Must be CHUNK_HEADER_MAGIC */
 	uint32_t type_specific;
 	uint16_t type;
 	uint16_t flags;
@@ -138,7 +148,7 @@ struct backend_chunk {
 struct backend_zone {
 	struct backend_pool_header backup_header;
 	struct backend_chunk_header chunk_header[MAX_CHUNK];
-	struct backend_chunk chunk_data[];
+	struct backend_chunk chunk_data[MAX_CHUNK];
 };
 
 struct backend_pool {
@@ -150,14 +160,32 @@ struct backend_pool {
 struct backend_persistent {
 	struct backend super;
 	struct backend_pool *pool;
-	size_t pool_size;
+	size_t pool_size; /* size in bytes */
 	int max_zone;
 	int is_pmem;
+	int zones_exhausted; /* number of zones already processed */
 	persist_func persist;
+	pmemcpy_func pmemcpy;
+	pmemset_func pmemset;
 };
 
 struct backend *backend_persistent_open(void *ptr, size_t size);
 void backend_persistent_close(struct backend *backend);
+bool backend_persistent_consistency_check(void *ptr, size_t size);
 
 void persistent_set_alloc_ptr(struct arena *arena, uint64_t *ptr,
 	uint64_t value);
+void persistent_fill_buckets(struct pmalloc_pool *pool);
+void persistent_bucket_classes(struct pmalloc_pool *pool);
+void persistent_init_bucket_obj(struct bucket *bucket,
+	struct bucket_object *obj);
+bool persistent_set_bucket_obj_state(struct bucket *bucket,
+	struct bucket_object *obj, enum bucket_obj_state state);
+bool persistent_locate_bucket_obj(struct pmalloc_pool *pool,
+	struct bucket_object *obj, uint64_t data_offset);
+void *persistent_get_direct(struct pmalloc_pool *pool, uint64_t ptr);
+void persistent_copy_content(struct pmalloc_pool *pool,
+	struct bucket_object *dest, struct bucket_object *src);
+void persistent_set_guard(struct arena *arena, enum guard_type type,
+	uint64_t *ptr);
+void persistent_clear_guard(struct arena *arena);

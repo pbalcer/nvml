@@ -69,14 +69,15 @@ struct arena_backend_operations mock_arena_ops = {
 
 struct bucket_object mock_obj = {
 	.real_size = TEST_ALLOC_SIZE,
+	.size_idx = TEST_BUCKET_UNITS,
 	.data_offset = TEST_DATA_OFFSET
 };
 
-FUNC_WRAP_BEGIN(bucket_object_init, void, struct bucket_object *obj,
+FUNC_WRAP_BEGIN(bucket_object_locate, bool, struct bucket_object *obj,
 	struct pmalloc_pool *p, uint64_t ptr)
 	obj->real_size = TEST_ALLOC_SIZE;
 	obj->data_offset = TEST_DATA_OFFSET;
-FUNC_WRAP_END_NO_RET
+FUNC_WRAP_END(true)
 
 FUNC_WILL_RETURN(arena_guard_up, true)
 FUNC_WILL_RETURN(arena_guard_down, true)
@@ -89,17 +90,20 @@ FUNC_WRAP_BEGIN(arena_select_bucket, void *, struct arena *arena, size_t size)
 FUNC_WRAP_ARG_EQ(arena, &mock_arena)
 FUNC_WRAP_END(&mock_bucket)
 
-FUNC_WRAP_BEGIN(bucket_find_object, void *, struct bucket *bucket,
+FUNC_WRAP_BEGIN(bucket_get_object, bool, struct bucket *bucket,
+	struct bucket_object *obj,
 	uint64_t units)
+	*obj = mock_obj;
 FUNC_WRAP_ARG_EQ(bucket, &mock_bucket)
 FUNC_WRAP_ARG_EQ(units, TEST_BUCKET_UNITS)
-FUNC_WRAP_END(&mock_obj)
+FUNC_WRAP_END(true)
 
 FUNC_WRAP_BEGIN(pool_select_arena, void *, struct pmalloc_pool *p)
 FUNC_WRAP_ARG_NE(p->lock, NULL)
 FUNC_WRAP_ARG_EQ(p->backend->type, BACKEND_NOOP)
-FUNC_WRAP_ARG_EQ(p->backend->a_ops->set_alloc_ptr, noop_set_alloc_ptr)
 FUNC_WRAP_END(&mock_arena)
+
+FUNC_WILL_RETURN(bucket_mark_allocated, true)
 
 #define	TEST_POOL_SIZE 1024 * 1024 * 40 /* 40MB */
 
@@ -108,8 +112,9 @@ test_flow()
 {
 	mock_arena.a_ops = &mock_arena_ops;
 
-	struct pmalloc_pool *p = pool_open_noop(MALLOC(TEST_POOL_SIZE),
-		TEST_POOL_SIZE);
+	void *backend_ptr = MALLOC(TEST_POOL_SIZE);
+	struct pmalloc_pool *p = pool_open(backend_ptr,
+		TEST_POOL_SIZE, POOL_OPEN_FLAG_NOOP);
 
 	pmalloc(p, &test_ptr, TEST_ALLOC_SIZE);
 	ASSERT(test_ptr == TEST_DATA_OFFSET);
@@ -120,6 +125,8 @@ test_flow()
 	ASSERT(test_ptr == NULL_OFFSET);
 
 	pool_close(p);
+
+	FREE(backend_ptr);
 }
 
 int

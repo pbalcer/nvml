@@ -31,29 +31,12 @@
  */
 
 /*
- * arena.h -- internal definitions for arena
+ * container_noop.c -- internal definitions for noop container
  */
 
-struct arena {
-	int associated_threads; /* number of threads using this arena */
-	pthread_mutex_t *lock;
-	int id; /* index in the pool->arenas array */
-	struct pmalloc_pool *pool;
-	struct arena_backend_operations *a_ops;
-	struct bucket *buckets[MAX_BUCKETS];
+struct container_noop {
+	struct container super;
 };
 
-enum guard_type {
-	GUARD_TYPE_UNKNOWN,
-	GUARD_TYPE_MALLOC,
-	GUARD_TYPE_REALLOC,
-	GUARD_TYPE_FREE,
-
-	MAX_GUARD_TYPE
-};
-
-struct arena *arena_new(struct pmalloc_pool *p, int arena_id);
-void arena_delete(struct arena *a);
-bool arena_guard_up(struct arena *arena, uint64_t *ptr, enum guard_type type);
-struct bucket *arena_select_bucket(struct arena *arena, size_t size);
-bool arena_guard_down(struct arena *arena, uint64_t *ptr, enum guard_type type);
+struct container *container_noop_new();
+void container_noop_delete(struct container *container);

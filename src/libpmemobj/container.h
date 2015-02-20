@@ -31,29 +31,53 @@
  */
 
 /*
- * arena.h -- internal definitions for arena
+ * container.h -- internal definitions for containers
  */
 
-struct arena {
-	int associated_threads; /* number of threads using this arena */
-	pthread_mutex_t *lock;
-	int id; /* index in the pool->arenas array */
-	struct pmalloc_pool *pool;
-	struct arena_backend_operations *a_ops;
-	struct bucket *buckets[MAX_BUCKETS];
+enum container_type {
+	CONTAINER_NOOP,
+	CONTAINER_BINARY_SEARCH_TREE,
+	/* CONTAINER_LOCK_FREE_BITWISE_TRIE, */
+
+	MAX_CONTAINER_TYPE
 };
 
-enum guard_type {
-	GUARD_TYPE_UNKNOWN,
-	GUARD_TYPE_MALLOC,
-	GUARD_TYPE_REALLOC,
-	GUARD_TYPE_FREE,
+/*
+ * Type of the value stored in the container, the type is a 64bit unsigned
+ * integer because the value stored is memory block unique id.
+ */
+typedef uint64_t val_t;
 
-	MAX_GUARD_TYPE
+/*
+ * Can't be 0 because thats a legal unique id of the first memory block in
+ * the first zone.
+ */
+#define	NULL_VAL ~(0)
+
+struct container;
+
+struct container_operations {
+	/*
+	 * Adds a key-value pair to the container.
+	 */
+	bool (*add)(struct container *c, uint64_t key, val_t value);
+	/*
+	 * Gets and removes a key-value pair from the container that has
+	 * an equal key.
+	 */
+	val_t (*get_rm_eq)(struct container *c, uint64_t key);
+	/*
+	 * As above, but key has to be equal or greater.
+	 */
+	val_t (*get_rm_ge)(struct container *c, uint64_t key);
 };
 
-struct arena *arena_new(struct pmalloc_pool *p, int arena_id);
-void arena_delete(struct arena *a);
-bool arena_guard_up(struct arena *arena, uint64_t *ptr, enum guard_type type);
-struct bucket *arena_select_bucket(struct arena *arena, size_t size);
-bool arena_guard_down(struct arena *arena, uint64_t *ptr, enum guard_type type);
+struct container {
+	enum container_type type;
+	struct container_operations *c_ops;
+};
+
+struct container *container_new(enum container_type type);
+void container_delete(struct container *container);
+void container_init(struct container *container, enum container_type type,
+	struct container_operations *c_ops);

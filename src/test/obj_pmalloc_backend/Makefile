@@ -40,7 +40,8 @@ vpath %.h ../.. ../../common
 
 TARGET = obj_pmalloc_backend
 OBJS = obj_pmalloc_backend.o out.o util.o pmalloc.o bucket.o pool.o backend.o\
-	backend_persistent.o backend_noop.o arena.o
+	backend_persistent.o backend_noop.o arena.o container.o container_bst.o\
+	container_noop.o
 
 out.o: CFLAGS += -DSRCVERSION=\"utversion\"
 
@@ -48,6 +49,7 @@ LIBPMEM=y
 
 include ../Makefile.inc
 INCS += -I../../libpmemobj/ -I../../common/
+LDFLAGS += $(call extract_funcs, obj_pmalloc_backend.c)
 
 obj_pmalloc_backend.o: obj_pmalloc_backend.c
 

@@ -103,7 +103,8 @@ TEST = blk_nblock\
        obj_pmalloc_arena\
        obj_pmalloc_pool\
        obj_pmalloc_bucket\
-       obj_pmalloc_integration
+       obj_pmalloc_integration\
+       obj_pmalloc_container
 
 all     : TARGET = all
 clean   : TARGET = clean

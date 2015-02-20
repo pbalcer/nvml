@@ -31,81 +31,61 @@
  */
 
 /*
- * backend.c -- implementation of backend
+ * container_noop.c -- implementation of noop container
+ *
+ * The noop interface implementation is used for testing and as a base
+ * for new implementations.
  */
 
+#include <stdlib.h>
 #include <stdint.h>
 #include <stdbool.h>
-#include <stdlib.h>
-#include "bucket.h"
-#include "arena.h"
-#include "backend.h"
-#include "backend_persistent.h"
-#include "backend_noop.h"
-#include "pool.h"
+#include "container.h"
+#include "container_noop.h"
 #include "util.h"
 #include "out.h"
 
-static struct backend *(*backend_open_by_type[MAX_BACKEND])
-	(void *ptr, size_t size) = {
-	backend_noop_open,
-	backend_persistent_open
-};
-
-static void (*backend_close_by_type[MAX_BACKEND])
-	(struct backend *b) = {
-	backend_noop_close,
-	backend_persistent_close
-};
-
-static bool (*backend_check_by_type[MAX_BACKEND])
-	(void *ptr, size_t size) = {
-	backend_noop_consistency_check,
-	backend_persistent_consistency_check
-};
-
-/*
- * backend_open -- opens a backend of desired type
- */
-struct backend *
-backend_open(enum backend_type type, void *ptr, size_t size)
-{
-	ASSERT(type < MAX_BACKEND);
-	return backend_open_by_type[type](ptr, size);
-}
-
-/*
- * backend_close -- closes a backend based on its type
- */
-void
-backend_close(struct backend *backend)
-{
-	ASSERT(backend->type < MAX_BACKEND);
-	backend_close_by_type[backend->type](backend);
-}
-
-/*
- * backend_init -- initializes a backend
- */
-void
-backend_init(struct backend *backend, enum backend_type type,
-	struct bucket_backend_operations *b_ops,
-	struct arena_backend_operations *a_ops,
-	struct pool_backend_operations *p_ops)
-{
-	backend->type = type;
-
-	backend->b_ops = b_ops;
-	backend->a_ops = a_ops;
-	backend->p_ops = p_ops;
-}
-
-/*
- * backend_consistency_check -- checks consistency of the backend
- */
 bool
-backend_consistency_check(enum backend_type type,
-	void *ptr, size_t size)
+noop_add(struct container *c, uint64_t key, val_t value)
 {
-	return backend_check_by_type[type](ptr, size);
+	return false;
+}
+
+val_t
+noop_get_rm_eq(struct container *c, uint64_t key)
+{
+	return NULL_VAL;
+}
+
+val_t
+noop_get_rm_ge(struct container *c, uint64_t key)
+{
+	return NULL_VAL;
+}
+
+struct container_operations container_noop_ops = {
+	.add = noop_add,
+	.get_rm_eq = noop_get_rm_eq,
+	.get_rm_ge = noop_get_rm_ge
+};
+
+struct container *
+container_noop_new()
+{
+	struct container_noop *container = Malloc(sizeof (*container));
+	if (container == NULL) {
+		goto error_container_malloc;
+	}
+
+	container_init(&container->super, CONTAINER_NOOP, &container_noop_ops);
+
+	return (struct container *)container;
+error_container_malloc:
+	return NULL;
+}
+
+void
+container_noop_delete(struct container *container)
+{
+	Free(container);
 }

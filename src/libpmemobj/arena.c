@@ -32,6 +32,12 @@
 
 /*
  * arena.c -- implementation of arena
+ *
+ * Each thread that performs any operations has to have a selected arena
+ * that creates a critical section in which all the bucket objects can
+ * be accessed and modified without acquiring any more locks. Each arena has
+ * its own copy of secondary buckets that get their separate objects from
+ * the pool.
  */
 
 #include <stdint.h>
@@ -73,6 +79,9 @@ arena_new(struct pmalloc_pool *p, int arena_id)
 	arena->a_ops = p->backend->a_ops;
 	memset(arena->buckets, 0, sizeof (arena->buckets));
 
+	/* XXX The bucket 0 is shared */
+	arena->buckets[0] = p->buckets[0];
+
 	return arena;
 error_lock_init:
 	Free(arena->lock);
@@ -88,7 +97,8 @@ error_arena_malloc:
 void
 arena_delete(struct arena *a)
 {
-	for (int i = 0; i < MAX_BUCKETS; ++i) {
+	/* XXX Skip bucket 0 */
+	for (int i = 1; i < MAX_BUCKETS; ++i) {
 		if (a->buckets[i] != NULL) {
 			bucket_delete(a->buckets[i]);
 		}
@@ -102,7 +112,7 @@ arena_delete(struct arena *a)
 }
 
 /*
- * arena_guard_up -- acquire locks neccessery to perform operatin in threads
+ * arena_guard_up -- acquire locks necessery to perform operations in threads
  */
 bool
 arena_guard_up(struct arena *arena, uint64_t *ptr, enum guard_type type)
@@ -110,7 +120,7 @@ arena_guard_up(struct arena *arena, uint64_t *ptr, enum guard_type type)
 	if (pthread_mutex_lock(arena->lock) != 0)
 		return false;
 
-	/* XXX */
+	arena->a_ops->set_guard(arena, type, ptr);
 
 	return true;
 }
@@ -124,7 +134,7 @@ arena_guard_down(struct arena *arena, uint64_t *ptr, enum guard_type type)
 	if (pthread_mutex_unlock(arena->lock) != 0)
 		return false;
 
-	/* XXX */
+	arena->a_ops->clear_guard(arena);
 
 	return true;
 }

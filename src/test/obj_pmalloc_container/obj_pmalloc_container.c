@@ -31,81 +31,73 @@
  */
 
 /*
- * backend.c -- implementation of backend
+ * obj_pmalloc_container.c -- unit test for pmalloc container interface
  */
-
-#include <stdint.h>
 #include <stdbool.h>
+#include <assert.h>
 #include <stdlib.h>
-#include "bucket.h"
-#include "arena.h"
-#include "backend.h"
-#include "backend_persistent.h"
-#include "backend_noop.h"
-#include "pool.h"
-#include "util.h"
-#include "out.h"
+#include <time.h>
+#include "unittest.h"
+#include "container.h"
 
-static struct backend *(*backend_open_by_type[MAX_BACKEND])
-	(void *ptr, size_t size) = {
-	backend_noop_open,
-	backend_persistent_open
-};
+#define	TEST_KEY 0b10101L
+#define	TEST_KEY2 0b10111L
+#define	TEST_KEY_SMALLER 0b10001
+#define	TEST_VALUE 1234
 
-static void (*backend_close_by_type[MAX_BACKEND])
-	(struct backend *b) = {
-	backend_noop_close,
-	backend_persistent_close
-};
-
-static bool (*backend_check_by_type[MAX_BACKEND])
-	(void *ptr, size_t size) = {
-	backend_noop_consistency_check,
-	backend_persistent_consistency_check
-};
-
-/*
- * backend_open -- opens a backend of desired type
- */
-struct backend *
-backend_open(enum backend_type type, void *ptr, size_t size)
-{
-	ASSERT(type < MAX_BACKEND);
-	return backend_open_by_type[type](ptr, size);
-}
-
-/*
- * backend_close -- closes a backend based on its type
- */
 void
-backend_close(struct backend *backend)
+container_test_create_delete()
 {
-	ASSERT(backend->type < MAX_BACKEND);
-	backend_close_by_type[backend->type](backend);
+	struct container *c = container_new(CONTAINER_NOOP);
+	ASSERT(c != NULL);
+	ASSERT(c->type == CONTAINER_NOOP);
+	container_delete(c);
 }
 
-/*
- * backend_init -- initializes a backend
- */
 void
-backend_init(struct backend *backend, enum backend_type type,
-	struct bucket_backend_operations *b_ops,
-	struct arena_backend_operations *a_ops,
-	struct pool_backend_operations *p_ops)
+container_test_lft_insert_get_remove(enum container_type ctype)
 {
-	backend->type = type;
-
-	backend->b_ops = b_ops;
-	backend->a_ops = a_ops;
-	backend->p_ops = p_ops;
+	struct container *c = container_new(ctype);
+	ASSERT(c != NULL);
+	ASSERT(c->c_ops->add(c, TEST_KEY, TEST_VALUE));
+	ASSERT(c->c_ops->add(c, TEST_KEY2, TEST_VALUE));
+	ASSERT(c->c_ops->get_rm_ge(c, TEST_KEY_SMALLER) == TEST_VALUE);
+	ASSERT(c->c_ops->get_rm_ge(c, TEST_KEY_SMALLER) == TEST_VALUE);
+	container_delete(c);
 }
 
-/*
- * backend_consistency_check -- checks consistency of the backend
- */
-bool
-backend_consistency_check(enum backend_type type,
-	void *ptr, size_t size)
+#define	TAB_SIZE 1000
+
+void
+container_test_lft_many(enum container_type ctype)
 {
-	return backend_check_by_type[type](ptr, size);
+	srand(0);
+	struct container *c = container_new(ctype);
+	ASSERT(c != NULL);
+	int *elements = MALLOC(sizeof (int) * TAB_SIZE);
+	for (int i = 0; i < TAB_SIZE; ++i) {
+		elements[i] = rand();
+	}
+
+	for (int i = 0; i < TAB_SIZE; ++i) {
+		c->c_ops->add(c, elements[i], elements[i]);
+	}
+
+	for (int i = 0; i < TAB_SIZE; ++i) {
+		ASSERT(elements[i] == c->c_ops->get_rm_eq(c, elements[i]));
+	}
+
+	FREE(elements);
+	container_delete(c);
+}
+
+int
+main(int argc, char *argv[])
+{
+	START(argc, argv, "obj_pmalloc_container");
+	container_test_create_delete();
+	container_test_lft_insert_get_remove(CONTAINER_BINARY_SEARCH_TREE);
+	container_test_lft_many(CONTAINER_BINARY_SEARCH_TREE);
+
+	DONE(NULL);
 }

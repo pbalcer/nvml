@@ -37,7 +37,13 @@
 #define	MAX_ARENAS 10
 
 struct pmalloc_pool {
+	/*
+	 * Collection of structures that define the minimum unit sizes the
+	 * allocator currently supports. Each object can consist of several
+	 * units.
+	 */
 	struct bucket_class bucket_classes[MAX_BUCKETS];
+
 	pthread_mutex_t *lock;
 	struct arena *arenas[MAX_ARENAS];
 	struct backend *backend;
