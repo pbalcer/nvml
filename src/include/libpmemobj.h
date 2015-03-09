@@ -142,6 +142,15 @@ return TX_STATE_ABORTED;\
 
 #define D(obj) ((typeof (obj.__type))pmemobj_direct(__ctx, obj.pobj))
 
+
+#define TX(tx_rname, tx_body)\
+  ({\
+    enum tx_state __tx (struct transaction_context *__ctx, void *tx_rname)\
+      tx_body\
+    __tx;\
+  })
+
+
 #ifdef __cplusplus
 }
 #endif
