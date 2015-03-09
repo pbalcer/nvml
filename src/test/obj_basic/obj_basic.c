@@ -84,20 +84,17 @@ main(int argc, char *argv[])
 
 	pmemobj_init_root(p, sizeof (struct node));
 
-	//pmemobj_tx_exec(p, basic_tx);
-
-	int val = 5;
-	int val2 = 10;
+	//pmemobj_tx_exec(p, __tx);
 
 	pmemobj_tx_exec(p, TX(root, {
 		struct node *n = root;
 		OUT("node %p value: %d", n, n->value);
-		POBJ_SET(n->value, val);
+		POBJ_SET(n->value, 5);
 		if (POBJ_IS_NULL(n->next)) {
 			OUT("next NULL!");
 			POBJ_NEW(n->next);
 			struct node *next = D(n->next);
-			POBJ_SET(next->value, val2);
+			POBJ_SET(next->value, 10);
 		} else {
 			struct node *next = D(n->next);
 			OUT("next %p value: %d", next, next->value);

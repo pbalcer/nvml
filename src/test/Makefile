@@ -35,70 +35,7 @@
 #
 # Makefile -- build all unit tests
 #
-TEST = blk_nblock\
-       blk_non_zero\
-       blk_recovery\
-       blk_rw\
-       blk_rw_mt\
-       checksum\
-       log_basic\
-       log_recovery\
-       log_walker\
-       pmem_isa_proc\
-       pmem_is_pmem\
-       pmem_is_pmem_proc\
-       pmem_map\
-       pmem_memmove\
-       pmem_memcpy\
-       pmem_memset\
-       scope\
-       traces\
-       traces_custom_function\
-       traces_pmem\
-       util_map_proc\
-       util_pool_create\
-       util_pool_open\
-       vmem_aligned_alloc\
-       vmem_calloc\
-       vmem_check_allocations\
-       vmem_check_version\
-       vmem_custom_alloc\
-       vmem_malloc\
-       vmem_malloc_usable_size\
-       vmem_mix_allocations\
-       vmem_multiple_pools\
-       vmem_out_of_memory\
-       vmem_check\
-       vmem_create\
-       vmem_create_error\
-       vmem_create_in_region\
-       vmem_delete\
-       vmem_realloc\
-       vmem_stats\
-       vmem_strdup\
-       vmem_fork\
-       vmem_valgrind\
-       vmem_pages_purging\
-       vmmalloc_calloc\
-       vmmalloc_check_allocations\
-       vmmalloc_init\
-       vmmalloc_malloc\
-       vmmalloc_malloc_hooks\
-       vmmalloc_malloc_usable_size\
-       vmmalloc_memalign\
-       vmmalloc_out_of_memory\
-       vmmalloc_realloc\
-       vmmalloc_valgrind\
-       vmmalloc_valloc\
-       pmemspoil\
-       pmemwrite\
-       pmempool_check\
-       pmempool_info\
-       pmempool_dump\
-       pmempool_create\
-       pmempool_help\
-       magic\
-       obj_pmalloc_basic\
+TEST = obj_pmalloc_basic\
        obj_pmalloc_backend\
        obj_pmalloc_arena\
        obj_pmalloc_pool\

@@ -33,10 +33,10 @@
 #
 
 CSTYLE = ../utils/cstyle
-TARGETS = libpmem libvmem libpmemblk libpmemlog libpmemobj libvmmalloc tools
+TARGETS = libpmem libpmemobj
 ALL_TARGETS = $(TARGETS) examples benchmarks
-CLEAN_TARGETS = $(ALL_TARGETS) test jemalloc
-CLOBBER_TARGETS = $(ALL_TARGETS) test jemalloc
+CLEAN_TARGETS = $(ALL_TARGETS) test
+CLOBBER_TARGETS = $(ALL_TARGETS) test
 CSTYLE_TARGETS = $(ALL_TARGETS) test
 INSTALL_TARGETS = $(TARGETS)
 

@@ -107,7 +107,11 @@ enum tx_state {
 	MAX_TX_STATE
 };
 
+#ifdef __clang__
+typedef int (^tx_func)(struct transaction_context *ctx, void *root);
+#else
 typedef enum tx_state (*tx_func)(struct transaction_context *ctx, void *root);
+#endif
 
 void *pmemobj_init_root(PMEMobjpool *p, size_t size);
 enum tx_state pmemobj_tx_exec(PMEMobjpool *p, tx_func tx);
@@ -142,14 +146,22 @@ return TX_STATE_ABORTED;\
 
 #define D(obj) ((typeof (obj.__type))pmemobj_direct(__ctx, obj.pobj))
 
-
+#ifdef __clang__
 #define TX(tx_rname, tx_body)\
-  ({\
-    enum tx_state __tx (struct transaction_context *__ctx, void *tx_rname)\
-      tx_body\
-    __tx;\
-  })
-
+({\
+	tx_func __tx = \
+	^(struct transaction_context *__ctx, void *tx_rname)\
+	tx_body;\
+	__tx;\
+})
+#else
+#define TX(tx_rname, tx_body)\
+({\
+	enum tx_state __tx (struct transaction_context *__ctx, void *tx_rname)\
+	tx_body\
+	__tx;\
+})
+#endif
 
 #ifdef __cplusplus
 }

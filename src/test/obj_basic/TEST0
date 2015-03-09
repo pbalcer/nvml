@@ -32,10 +32,10 @@
 #
 
 #
-# src/test/obj_pmalloc_arena/TEST0
+# src/test/obj_basic/TEST0
 #
 
-export UNITTEST_NAME=obj_pmalloc_arena/TEST0
+export UNITTEST_NAME=obj_basic/TEST0
 export UNITTEST_NUM=0
 
 # standard unit test setup
@@ -43,7 +43,8 @@ export UNITTEST_NUM=0
 
 setup
 
-expect_normal_exit ./obj_pmalloc_basic$EXESUFFIX
+rm -f testfile
+expect_normal_exit ./obj_basic$EXESUFFIX testfile
 
 check
 

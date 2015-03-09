@@ -88,6 +88,11 @@ INCS = -I../unittest -I../../include
 CFLAGS = -ggdb -Wall -Werror -std=gnu99
 LDFLAGS =
 
+ifeq ($(CC),clang)
+CFLAGS += -fblocks
+LDFLAGS += -lBlocksRuntime
+endif
+
 ifneq ($(TARGET),)
 TARGET_STATIC_DEBUG=$(TARGET).static-debug
 TARGET_STATIC_NONDEBUG=$(TARGET).static-nondebug
