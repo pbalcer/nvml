@@ -41,11 +41,13 @@ libpmemobj.so {
 		pmemobj_close;
 		pmemobj_check;
 		pmemobj_init_root;
-		pmemobj_tx_exec;
+		pmemobj_tx_exec_init;
+		pmemobj_tx_exec_finish;
 		pmemobj_set;
 		pmemobj_direct;
 		pmemobj_alloc;
 		pmemobj_free;
+		pmemobj_root;
 	local:
 		*;
 };

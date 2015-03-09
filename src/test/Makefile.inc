@@ -88,7 +88,7 @@ INCS = -I../unittest -I../../include
 CFLAGS = -ggdb -Wall -Werror -std=gnu99
 LDFLAGS =
 
-ifeq ($(CC),clang)
+ifneq (,$(findstring clang,$(CC)))
 CFLAGS += -fblocks
 LDFLAGS += -lBlocksRuntime
 endif

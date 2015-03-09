@@ -114,7 +114,19 @@ typedef enum tx_state (*tx_func)(struct transaction_context *ctx, void *root);
 #endif
 
 void *pmemobj_init_root(PMEMobjpool *p, size_t size);
-enum tx_state pmemobj_tx_exec(PMEMobjpool *p, tx_func tx);
+void *pmemobj_root(struct transaction_context *__ctx);
+struct transaction_context *pmemobj_tx_exec_init(PMEMobjpool *p);
+enum tx_state pmemobj_tx_exec_finish(struct transaction_context *__ctx,
+	enum tx_state s);
+
+static inline enum tx_state pmemobj_tx_exec(PMEMobjpool *p, tx_func tx)
+{
+	struct transaction_context *__ctx = pmemobj_tx_exec_init(p);
+	if (__ctx == NULL)
+		return TX_STATE_FAILED;
+	return pmemobj_tx_exec_finish(__ctx, tx(__ctx, pmemobj_root(__ctx)));
+}
+
 int pmemobj_set(struct transaction_context *ctx, void *dst, void *src,
 	size_t size);
 void *pmemobj_direct(struct transaction_context *ctx, struct pobj_id pobj);

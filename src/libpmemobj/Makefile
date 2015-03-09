@@ -38,7 +38,7 @@ SOURCE = libpmemobj.c obj.c arena.c backend.c bucket.c pmalloc.c pool.c \
     backend_persistent.c backend_noop.c container.c container_noop.c \
     container_bst.c $(COMMON)/util.c $(COMMON)/out.c
 
-ifeq ($(CC),clang)
+ifneq (,$(findstring clang,$(CC)))
 EXTRA_LDFLAGS=-lBlocksRuntime
 EXTRA_CFLAGS=-fblocks
 endif

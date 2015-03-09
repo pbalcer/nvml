@@ -343,29 +343,35 @@ tx_commit(struct transaction_context *__ctx)
 	}
 }
 
-enum tx_state
-pmemobj_tx_exec(PMEMobjpool *p, tx_func tx)
+struct transaction_context *
+pmemobj_tx_exec_init(PMEMobjpool *p)
 {
 	/* this HAS to be called __ctx */
 	struct transaction_context *__ctx = Malloc(sizeof (*__ctx));
 	if (__ctx == NULL)
-		goto error_tx_malloc;
+		return NULL;
 
 	__ctx->pool = p;
 
 	if (POBJ_IS_NULL(p->tx)) {
-		POBJ_NEW(p->tx);
+		pmemobj_alloc(__ctx, &p->tx.pobj, sizeof (*p->tx.__type));
 		__ctx->dtx = D(p->tx);
 	} else {
 		/* XXX nested transactions... */
 		Free(__ctx);
-		return TX_STATE_FAILED;
+		return NULL;
 	}
 
 	__ctx->n_txop = 0;
 
 	__ctx->running = 1;
-	enum tx_state s = tx(__ctx, pdirect(p->pmp, p->root_offset));
+
+	return __ctx;
+}
+
+enum tx_state
+pmemobj_tx_exec_finish(struct transaction_context *__ctx, enum tx_state s)
+{
 	__ctx->running = 0;
 
 	if (s == TX_STATE_SUCCESS) {
@@ -374,14 +380,17 @@ pmemobj_tx_exec(PMEMobjpool *p, tx_func tx)
 		tx_abort(__ctx);
 	}
 
-	POBJ_DELETE(p->tx);
+	POBJ_DELETE(__ctx->pool->tx);
 
 	Free(__ctx);
 
 	return s;
+}
 
-error_tx_malloc:
-	return TX_STATE_FAILED;
+void *
+pmemobj_root(struct transaction_context *__ctx)
+{
+	return pdirect(__ctx->pool->pmp, __ctx->pool->root_offset);
 }
 
 int

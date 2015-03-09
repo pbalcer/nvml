@@ -44,11 +44,11 @@ LIBS = -Wl,-rpath=$(LIBDIR) -L$(LIBDIR) -lpmemobj -lpmem -pthread
 CFLAGS = -std=gnu99 -ggdb -Wall -Werror
 CSTYLE = ../../../utils/cstyle
 LDFLAGS =
-ifeq ($(CC),clang)
-CFLAGS+=-fblocks
-LDFLAGS+= -lBlocksRuntime
-endif
 
+ifneq (,$(findstring clang,$(CC)))
+CFLAGS += -fblocks
+LDFLAGS += -lBlocksRuntime
+endif
 
 all:     TARGET = all
 clean:   TARGET = clean
