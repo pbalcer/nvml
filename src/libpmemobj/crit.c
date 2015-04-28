@@ -42,6 +42,11 @@
 #include "out.h"
 #include "crit.h"
 
+#define	BIT_IS_SET(n, i) (!!((n) & (1L << (i))))
+#define	NODE_IS_ACCESSOR(node) (BIT_IS_SET((uintptr_t)(node), 0))
+#define	NODE_ACCESSOR_GET(node) ((void *)(node) - 1)
+#define	NODE_ACCESSOR_SET(d, node) ((d) = ((void *)(node) + 1))
+
 struct node {
 	void *childs[2];
 	int diff;
@@ -51,12 +56,6 @@ struct crit {
 	void *root;
 	pthread_mutex_t *lock;
 };
-
-#define	KEY_BYTES 8
-#define	BIT_IS_SET(n, i) (!!((n) & (1L << (i))))
-#define	NODE_IS_ACCESSOR(node) (BIT_IS_SET((uintptr_t)(node), 0))
-#define	NODE_ACCESSOR_GET(node) ((void *)(node) - 1)
-#define	NODE_ACCESSOR_SET(d, node) ((d) = ((void *)(node) + 1))
 
 static int
 find_crit_bit(uint64_t lhs, uint64_t rhs)
