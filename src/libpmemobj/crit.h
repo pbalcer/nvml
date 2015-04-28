@@ -31,21 +31,14 @@
  */
 
 /*
- * pmalloc.h -- internal definitions for persistent malloc
+ * crit.h -- internal definitions for crit-bit tree
  */
 
-struct pmalloc_heap;
+struct crit;
 
-int heap_boot(PMEMobjpool *pop);
-int heap_init(PMEMobjpool *pop);
-int heap_cleanup(PMEMobjpool *pop);
-int heap_check(PMEMobjpool *pop);
-
-int pmalloc(PMEMobjpool *pop, uint64_t *off, size_t size);
-int pmalloc_construct(PMEMobjpool *pop, uint64_t *off, size_t size,
-	void (*constructor)(void *ptr, void *arg), void *arg);
-
-int prealloc(PMEMobjpool *pop, uint64_t *off, size_t size);
-
-size_t pmalloc_usable_size(PMEMobjpool *pop, uint64_t off);
-int pfree(PMEMobjpool *pop, uint64_t *off);
+struct crit *crit_new();
+void crit_delete(struct crit *t);
+int crit_insert(struct crit *t, uint64_t key);
+uint64_t crit_peek_root(struct crit *t);
+uint64_t crit_find(struct crit *t, uint64_t key);
+uint64_t crit_remove(struct crit *t, uint64_t key, int eq);

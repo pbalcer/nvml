@@ -30,22 +30,17 @@
  * OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
  */
 
-/*
- * pmalloc.h -- internal definitions for persistent malloc
- */
+struct bucket;
 
-struct pmalloc_heap;
+struct bucket *bucket_new(size_t unit_size, int unit_max);
+void bucket_delete(struct bucket *b);
 
-int heap_boot(PMEMobjpool *pop);
-int heap_init(PMEMobjpool *pop);
-int heap_cleanup(PMEMobjpool *pop);
-int heap_check(PMEMobjpool *pop);
-
-int pmalloc(PMEMobjpool *pop, uint64_t *off, size_t size);
-int pmalloc_construct(PMEMobjpool *pop, uint64_t *off, size_t size,
-	void (*constructor)(void *ptr, void *arg), void *arg);
-
-int prealloc(PMEMobjpool *pop, uint64_t *off, size_t size);
-
-size_t pmalloc_usable_size(PMEMobjpool *pop, uint64_t off);
-int pfree(PMEMobjpool *pop, uint64_t *off);
+int bucket_is_small(struct bucket *b);
+int bucket_calc_units(struct bucket *b, size_t size);
+size_t bucket_unit_size(struct bucket *b);
+int bucket_insert_block(struct bucket *b, uint32_t chunk_id, uint32_t zone_id,
+	uint32_t size_idx, uint16_t block_off);
+int bucket_get_block(struct bucket *b, uint32_t *chunk_id, uint32_t *zone_id,
+	uint32_t *size_idx, uint16_t *block_off);
+int bucket_lock(struct bucket *b);
+void bucket_unlock(struct bucket *b);

@@ -34,51 +34,87 @@
  * obj_pmalloc_basic.c -- unit test for pmalloc interface
  */
 #include <stdint.h>
+#include <pthread.h>
 
 #include "libpmemobj.h"
 #include "pmalloc.h"
 #include "util.h"
 #include "obj.h"
+#include "lane.h"
 
 #include "unittest.h"
 
-#define	MOCK_POOL_SIZE (10 * 1024 * 1024) /* 10 megabytes */
+#define	MOCK_POOL_SIZE PMEMOBJ_MIN_POOL
+#define	MAX_ALLOCS 20
 #define	TEST_ALLOC_SIZE 256
-#define	TEST_ALLOC_GROW_SIZE (TEST_ALLOC_SIZE * 10)
+#define	TEST_VALUE 5
+
+struct mock_pop {
+	PMEMobjpool p;
+	char lanes[LANE_SECTION_LEN];
+	uint64_t ptr;
+};
+
+/*
+ * drain_empty -- (internal) empty function for drain on non-pmem memory
+ */
+static void
+drain_empty(void)
+{
+	/* do nothing */
+}
+
+struct foo {
+	uintptr_t bar;
+};
+
+void test_constructor(void *ptr, void *arg) {
+	struct foo *f = ptr;
+	f->bar = (uintptr_t)arg;
+}
 
 int
 main(int argc, char *argv[])
 {
 	START(argc, argv, "obj_pmalloc_basic");
 
-	void *addr = MALLOC(MOCK_POOL_SIZE);
-	PMEMobjpool *mock_pop = addr;
+	struct mock_pop *addr = MALLOC(MOCK_POOL_SIZE);
+	PMEMobjpool *mock_pop = &addr->p;
 	mock_pop->addr = addr;
 	mock_pop->size = MOCK_POOL_SIZE;
 	mock_pop->rdonly = 0;
 	mock_pop->is_pmem = 0;
+	mock_pop->heap_offset = sizeof (struct mock_pop);
+	mock_pop->heap_size = MOCK_POOL_SIZE - mock_pop->heap_offset;
+	mock_pop->persist = (persist_fn)pmem_msync;
+	mock_pop->nlanes = 1;
+	mock_pop->lanes_offset = sizeof (PMEMobjpool);
+	mock_pop->flush = (flush_fn)pmem_msync;
+	mock_pop->drain = drain_empty;
 
+	lane_boot(mock_pop);
+
+	heap_init(mock_pop);
 	heap_boot(mock_pop);
+
 	ASSERTne(mock_pop->heap, NULL);
+	uint64_t addrs[MAX_ALLOCS];
+	for (int i = 0; i < MAX_ALLOCS; ++i) {
+		ASSERT(pmalloc(mock_pop, &addr->ptr, sizeof (struct foo)) == 0);
+		addrs[i] = addr->ptr;
+		ASSERT(addrs[i] != 0);
+	}
 
-	int ret;
-	uint64_t off;
-	ret = pmalloc(mock_pop->heap, &off, TEST_ALLOC_SIZE);
-	ASSERTeq(ret, 0);
-	ASSERT(off > 0 && off < MOCK_POOL_SIZE);
+	for (int i = 0; i < MAX_ALLOCS; ++i) {
+		addr->ptr = addrs[i];
+		ASSERT(pfree(mock_pop, &addr->ptr) == 0);
+	}
 
-	ret = pgrow(mock_pop->heap, off, TEST_ALLOC_GROW_SIZE);
-	ASSERTeq(ret, 0);
+	ASSERT(pmalloc_construct(mock_pop, &addr->ptr, sizeof (struct foo),
+		test_constructor, (void *)TEST_VALUE) == 0);
 
-	size_t usable_size = pmalloc_usable_size(mock_pop->heap, off);
-	ASSERT(usable_size >= TEST_ALLOC_GROW_SIZE);
-
-	ret = pfree(mock_pop->heap, &off);
-	ASSERTeq(ret, 0);
-	ASSERTeq(off, 0);
-
-	ret = heap_check(mock_pop);
-	ASSERTeq(ret, 0);
+	struct foo *f = (void *)mock_pop + addr->ptr;
+	ASSERT(f->bar == TEST_VALUE);
 
 	FREE(addr);
 

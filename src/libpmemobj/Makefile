@@ -35,8 +35,8 @@
 LIBRARY_NAME = pmemobj
 LIBRARY_SO_VERSION = 1
 LIBRARY_VERSION = 0.0
-SOURCE = libpmemobj.c obj.c redo.c pmalloc.c lane.c $(COMMON)/util.c\
-    $(COMMON)/out.c
+SOURCE = libpmemobj.c obj.c redo.c pmalloc.c lane.c heap.c crit.c bucket.c\
+    $(COMMON)/util.c $(COMMON)/out.c
 
 include ../Makefile.inc
 

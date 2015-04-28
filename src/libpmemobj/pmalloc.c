@@ -37,57 +37,118 @@
 #include <stdint.h>
 #include <errno.h>
 #include <stdlib.h>
+#include <stdio.h>
 
 #include "libpmemobj.h"
+#include "util.h"
 #include "pmalloc.h"
+#include "obj.h"
+#include "out.h"
+#include "heap.h"
+#include "bucket.h"
+#include "redo.h"
+#include "heap_layout.h"
+#include "lane.h"
 
+enum pmalloc_redo {
+	PMALLOC_REDO_PTR_OFFSET,
+	PMALLOC_REDO_HEADER,
 
-/*
- * heap_boot -- opens the heap region of the pmemobj pool
- *
- * If successful function returns zero. Otherwise an error number is returned.
- */
-int
-heap_boot(PMEMobjpool *pop)
+	MAX_PMALLOC_REDO
+};
+
+enum pfree_redo {
+	PFREE_REDO_PTR_OFFSET,
+	PFREE_REDO_HEADER,
+
+	MAX_PFREE_REDO
+};
+
+void
+alloc_write_header(PMEMobjpool *pop, struct allocation_header *alloc,
+	uint32_t chunk_id, uint32_t zone_id, uint64_t size)
 {
-	/* XXX */
+	alloc->chunk_id = chunk_id;
+	alloc->size = size;
+	alloc->zone_id = zone_id;
+
+	pop->persist(alloc, sizeof (*alloc));
+}
+
+struct allocation_header *
+alloc_get_header(PMEMobjpool *pop, uint64_t off)
+{
+	void *ptr = (void *)pop + off;
+	struct allocation_header *alloc = ptr - sizeof (*alloc);
+
+	return alloc;
+}
+
+static uint64_t
+pop_offset(PMEMobjpool *pop, void *ptr)
+{
+	return (uint64_t)ptr - (uint64_t)pop;
+}
+
+int
+pmalloc_huge(PMEMobjpool *pop, struct bucket *b, uint64_t *off, size_t size,
+	void (*constructor)(void *ptr, void *arg), void *arg)
+{
+	int units = bucket_calc_units(b, size +
+		sizeof (struct allocation_header));
+
+	uint32_t chunk_id = 0;
+	uint32_t zone_id = 0;
+	uint32_t size_idx = units;
+	uint16_t block_off = 0;
+
+	if (bucket_lock(b) != 0)
+		return EAGAIN;
+
+	if (bucket_get_block(b, &chunk_id, &zone_id, &size_idx, &block_off)
+		!= 0) {
+		bucket_unlock(b);
+		return ENOMEM;
+	}
+
+	if (units != size_idx)
+		heap_resize_chunk(pop, chunk_id, zone_id, units);
+
+	bucket_unlock(b);
+
+	struct chunk_header *hdr =
+		heap_get_chunk_header(pop, chunk_id, zone_id);
+
+	void *chunk_data = heap_get_chunk_data(pop, chunk_id, zone_id);
+
+	uint64_t real_size = bucket_unit_size(b) * units;
+
+	alloc_write_header(pop, chunk_data, chunk_id, zone_id, real_size);
+	void *datap = chunk_data + sizeof (struct allocation_header);
+	if (constructor != NULL)
+		constructor(datap, arg);
+
+	struct lane_section *lane;
+	lane_hold(pop, &lane, LANE_SECTION_ALLOCATOR);
+
+	struct allocator_lane_section *sec =
+		(struct allocator_lane_section *)lane->layout;
+
+	redo_log_store(pop, sec->redo, PMALLOC_REDO_PTR_OFFSET,
+		pop_offset(pop, off), pop_offset(pop, datap));
+	redo_log_store_last(pop, sec->redo, PMALLOC_REDO_HEADER,
+		pop_offset(pop, &hdr->type), CHUNK_TYPE_USED);
+
+	redo_log_process(pop, sec->redo, MAX_PMALLOC_REDO);
+
+	lane_release(pop);
 
 	return 0;
 }
 
-/*
- * heap_init -- initializes the heap
- *
- * If successful function returns zero. Otherwise an error number is returned.
- */
 int
-heap_init(PMEMobjpool *pop)
-{
-	/* XXX */
-
-	return 0;
-}
-
-/*
- * heap_boot -- cleanups the volatile heap state
- *
- * If successful function returns zero. Otherwise an error number is returned.
- */
-int
-heap_cleanup(PMEMobjpool *pop)
-{
-	/* XXX */
-
-	return 0;
-}
-
-/*
- * heap_check -- verifies if the heap is consistent and can be opened properly
- *
- * If successful function returns zero. Otherwise an error number is returned.
- */
-int
-heap_check(PMEMobjpool *pop)
+pmalloc_small(PMEMobjpool *pop, struct bucket *b, uint64_t *off, size_t size,
+	void (*constructor)(void *ptr, void *arg), void *arg)
 {
 	/* XXX */
 
@@ -102,11 +163,13 @@ heap_check(PMEMobjpool *pop)
  * If successful function returns zero. Otherwise an error number is returned.
  */
 int
-pmalloc(struct pmalloc_heap *heap, uint64_t *off, size_t size)
+pmalloc(PMEMobjpool *pop, uint64_t *off, size_t size)
 {
-	/* XXX */
+	struct bucket *b = heap_get_best_bucket(pop, size);
 
-	return ENOSYS;
+	return bucket_is_small(b) ?
+		pmalloc_small(pop, b, off, size, NULL, NULL) :
+		pmalloc_huge(pop, b, off, size, NULL, NULL);
 }
 
 /*
@@ -118,40 +181,25 @@ pmalloc(struct pmalloc_heap *heap, uint64_t *off, size_t size)
  * If successful function returns zero. Otherwise an error number is returned.
  */
 int
-pmalloc_construct(struct pmalloc_heap *heap, uint64_t *off, size_t size,
-	void (*constructor)(void *ptr, void *arg))
+pmalloc_construct(PMEMobjpool *pop, uint64_t *off, size_t size,
+	void (*constructor)(void *ptr, void *arg), void *arg)
 {
-	/* XXX */
+	struct bucket *b = heap_get_best_bucket(pop, size);
 
-	return ENOSYS;
+	return bucket_is_small(b) ?
+		pmalloc_small(pop, b, off, size, constructor, arg) :
+		pmalloc_huge(pop, b, off, size, constructor, arg);
 }
 
 /*
- * prealloc -- resizes an existing memory block previously allocated by pmalloc
+ * prealloc -- resizes in-place a previously allocated memory block
  *
  * The block offset is written persistently into the off variable.
  *
  * If successful function returns zero. Otherwise an error number is returned.
  */
 int
-prealloc(struct pmalloc_heap *heap, uint64_t *off, size_t size)
-{
-	/* XXX */
-
-	return ENOSYS;
-}
-
-/*
- * prealloc_construct -- resizes an existing memory block with a constructor
- *
- * The block offset is written persistently into the off variable, but only
- * after the constructor function has been called.
- *
- * If successful function returns zero. Otherwise an error number is returned.
- */
-int
-prealloc_construct(struct pmalloc_heap *heap, uint64_t *off, size_t size,
-	void (*constructor)(void *ptr, void *arg))
+prealloc(PMEMobjpool *pop, uint64_t *off, size_t size)
 {
 	/* XXX */
 
@@ -162,7 +210,43 @@ prealloc_construct(struct pmalloc_heap *heap, uint64_t *off, size_t size,
  * pmalloc_usable_size -- returns the number of bytes in the memory block
  */
 size_t
-pmalloc_usable_size(struct pmalloc_heap *heap, uint64_t off)
+pmalloc_usable_size(PMEMobjpool *pop, uint64_t off)
+{
+	return alloc_get_header(pop, off)->size;
+}
+
+int
+pfree_huge(PMEMobjpool *pop, struct bucket *b,
+	struct allocation_header *alloc, uint64_t *off)
+{
+	struct chunk_header *hdr =
+		heap_get_chunk_header(pop, alloc->chunk_id, alloc->zone_id);
+
+	struct lane_section *lane;
+	lane_hold(pop, &lane, LANE_SECTION_ALLOCATOR);
+
+	struct allocator_lane_section *sec =
+		(struct allocator_lane_section *)lane->layout;
+
+	redo_log_store(pop, sec->redo, PFREE_REDO_PTR_OFFSET,
+		pop_offset(pop, off), 0);
+	redo_log_store_last(pop, sec->redo, PFREE_REDO_HEADER,
+		pop_offset(pop, &hdr->type), CHUNK_TYPE_FREE);
+
+	redo_log_process(pop, sec->redo, MAX_PFREE_REDO);
+
+	lane_release(pop);
+
+	uint32_t units = bucket_calc_units(b, alloc->size);
+
+	bucket_insert_block(b, alloc->chunk_id, alloc->zone_id, units, 0);
+
+	return 0;
+}
+
+int
+pfree_small(PMEMobjpool *pop, struct bucket *b,
+	struct allocation_header *alloc, uint64_t *off)
 {
 	/* XXX */
 
@@ -177,22 +261,69 @@ pmalloc_usable_size(struct pmalloc_heap *heap, uint64_t off)
  * If successful function returns zero. Otherwise an error number is returned.
  */
 int
-pfree(struct pmalloc_heap *heap, uint64_t *off)
+pfree(PMEMobjpool *pop, uint64_t *off)
 {
-	/* XXX */
+	struct allocation_header *alloc = alloc_get_header(pop, *off);
 
-	return ENOSYS;
+	struct bucket *b = heap_get_best_bucket(pop, alloc->size);
+
+	return bucket_is_small(b) ?
+		pfree_small(pop, b, alloc, off) :
+		pfree_huge(pop, b, alloc, off);
 }
 
 /*
- * pgrow -- grows in-place a memory block previously allocated by pmalloc
- *
- * If successful function returns zero. Otherwise an error number is returned.
+ * lane_allocator_construct -- create allocator lane section
  */
-int
-pgrow(struct pmalloc_heap *heap, uint64_t off, size_t size)
+static int
+lane_allocator_construct(struct lane_section *section)
 {
-	/* XXX */
+	/* no-op */
 
-	return ENOSYS;
+	return 0;
 }
+
+/*
+ * lane_allocator_destruct -- destroy allocator lane section
+ */
+static int
+lane_allocator_destruct(struct lane_section *section)
+{
+	/* no-op */
+
+	return 0;
+}
+
+/*
+ * lane_allocator_recovery -- recovery of allocator lane section
+ */
+static int
+lane_allocator_recovery(PMEMobjpool *pop, struct lane_section_layout *section)
+{
+	struct allocator_lane_section *sec =
+		(struct allocator_lane_section *)section;
+	redo_log_process(pop, sec->redo, MAX_PMALLOC_REDO);
+
+	return 0;
+}
+
+/*
+ * lane_allocator_check -- consistency check of allocator lane section
+ */
+static int
+lane_allocator_check(PMEMobjpool *pop, struct lane_section_layout *section)
+{
+	struct allocator_lane_section *sec =
+		(struct allocator_lane_section *)section;
+
+	return redo_log_check(pop, sec->redo, MAX_PMALLOC_REDO);
+}
+
+struct section_operations allocator_ops = {
+	.construct = lane_allocator_construct,
+	.destruct = lane_allocator_destruct,
+	.recover = lane_allocator_recovery,
+	.check = lane_allocator_check
+};
+
+SECTION_PARM(LANE_SECTION_ALLOCATOR, &allocator_ops);
