@@ -154,6 +154,16 @@ main(int argc, char *argv[])
 	ASSERT(b == TEST_VALUE_A);
 	ASSERT(c == TEST_VALUE_C);
 
+	a = 0;
+	b = 0;
+	c = 0;
+
+	pmemobj_tx_begin(pop, NULL);
+	pmemobj_tx_abort(EINVAL);
+	a = TEST_VALUE_A;
+	pmemobj_tx_end();
+	ASSERT(a == TEST_VALUE_A);
+
 	pmemobj_close(pop);
 
 	DONE(NULL);
