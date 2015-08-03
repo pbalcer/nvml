@@ -48,7 +48,7 @@ POBJ_LAYOUT_ROOT(data_store, struct store_root);
 POBJ_LAYOUT_TOID(data_store, struct store_item);
 POBJ_LAYOUT_END(data_store);
 
-#define	MAX_INSERTS 500
+#define	MAX_INSERTS 1000000
 
 static uint64_t nkeys;
 static uint64_t keys[MAX_INSERTS];
@@ -107,7 +107,7 @@ int main(int argc, const char *argv[]) {
 
 	if (access(path, F_OK) != 0) {
 		if ((pop = pmemobj_create(path, POBJ_LAYOUT_NAME(data_store),
-			PMEMOBJ_MIN_POOL, 0666)) == NULL) {
+			PMEMOBJ_MIN_POOL*50, 0666)) == NULL) {
 			perror("failed to create pool\n");
 			return 1;
 		}
@@ -120,8 +120,18 @@ int main(int argc, const char *argv[]) {
 	}
 
 	TOID(struct store_root) root = POBJ_ROOT(pop, struct store_root);
-	if (!TOID_IS_NULL(D_RO(root)->map)) /* delete the map if it exists */
-		tree_map_delete(pop, &D_RW(root)->map);
+	if (!TOID_IS_NULL(D_RO(root)->map)) {
+		/* count the items */
+		tree_map_foreach(D_RO(root)->map, get_keys, NULL);
+		TX_BEGIN(pop) {
+			/* remove the items without outer transaction */
+			for (int i = 0; i < nkeys; ++i) {
+				tree_map_remove(pop, D_RO(root)->map, keys[i]);
+			}
+		} TX_END
+
+		return 0;
+	}
 
 	/* insert random items in a transaction */
 	TX_BEGIN(pop) {
@@ -130,27 +140,10 @@ int main(int argc, const char *argv[]) {
 		for (int i = 0; i < MAX_INSERTS; ++i) {
 			/* new_store_item is transactional! */
 			tree_map_insert(pop, D_RO(root)->map, rand(),
-				new_store_item().oid);
+				OID_NULL);
 		}
 
 	} TX_END
-
-	/* count the items */
-	tree_map_foreach(D_RO(root)->map, get_keys, NULL);
-
-	/* remove the items without outer transaction */
-	for (int i = 0; i < nkeys; ++i) {
-		PMEMoid item = tree_map_remove(pop, D_RO(root)->map, keys[i]);
-
-		assert(!OID_IS_NULL(item));
-		assert(OID_INSTANCEOF(item, struct store_item));
-	}
-
-	uint64_t old_nkeys = nkeys;
-
-	/* tree should be empty */
-	tree_map_foreach(D_RO(root)->map, dec_keys, NULL);
-	assert(old_nkeys == nkeys);
 
 	pmemobj_close(pop);
 
