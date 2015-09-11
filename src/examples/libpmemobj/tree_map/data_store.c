@@ -48,7 +48,7 @@ POBJ_LAYOUT_ROOT(data_store, struct store_root);
 POBJ_LAYOUT_TOID(data_store, struct store_item);
 POBJ_LAYOUT_END(data_store);
 
-#define	MAX_INSERTS 500
+#define	MAX_INSERTS 1000000
 
 static uint64_t nkeys;
 static uint64_t keys[MAX_INSERTS];
@@ -94,28 +94,20 @@ dec_keys(uint64_t key, PMEMoid value, void *arg)
 	return 0;
 }
 
-int main(int argc, const char *argv[]) {
-	if (argc < 2) {
-		printf("usage: %s file-name\n", argv[0]);
-		return 1;
-	}
-
-	const char *path = argv[1];
-
+void run_bench_tx(const char *path)
+{
 	PMEMobjpool *pop;
-	srand(time(NULL));
-
 	if (access(path, F_OK) != 0) {
 		if ((pop = pmemobj_create(path, POBJ_LAYOUT_NAME(data_store),
-			PMEMOBJ_MIN_POOL, 0666)) == NULL) {
+			100*PMEMOBJ_MIN_POOL, 0666)) == NULL) {
 			perror("failed to create pool\n");
-			return 1;
+			return;
 		}
 	} else {
 		if ((pop = pmemobj_open(path,
 				POBJ_LAYOUT_NAME(data_store))) == NULL) {
 			perror("failed to open pool\n");
-			return 1;
+			return;
 		}
 	}
 
@@ -123,6 +115,8 @@ int main(int argc, const char *argv[]) {
 	if (!TOID_IS_NULL(D_RO(root)->map)) /* delete the map if it exists */
 		tree_map_delete(pop, &D_RW(root)->map);
 
+	struct timespec tstart={0,0}, tend={0,0};
+	clock_gettime(CLOCK_MONOTONIC, &tstart);
 	/* insert random items in a transaction */
 	TX_BEGIN(pop) {
 		tree_map_new(pop, &D_RW(root)->map);
@@ -130,21 +124,34 @@ int main(int argc, const char *argv[]) {
 		for (int i = 0; i < MAX_INSERTS; ++i) {
 			/* new_store_item is transactional! */
 			tree_map_insert(pop, D_RO(root)->map, rand(),
-				new_store_item().oid);
+				OID_NULL);
 		}
-
+	} TX_ONABORT {
+		assert(0);
 	} TX_END
+
+	clock_gettime(CLOCK_MONOTONIC, &tend);
+	printf("insert %.5fs\n",
+		((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) -
+		((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
 
 	/* count the items */
 	tree_map_foreach(D_RO(root)->map, get_keys, NULL);
 
-	/* remove the items without outer transaction */
-	for (int i = 0; i < nkeys; ++i) {
-		PMEMoid item = tree_map_remove(pop, D_RO(root)->map, keys[i]);
+	clock_gettime(CLOCK_MONOTONIC, &tstart);
+	TX_BEGIN(pop) {
+		/* remove the items without outer transaction */
+		for (int i = 0; i < nkeys; ++i) {
+			tree_map_remove(pop, D_RO(root)->map, keys[i]);
+		}
+	} TX_ONABORT {
+		assert(0);
+	} TX_END
 
-		assert(!OID_IS_NULL(item));
-		assert(OID_INSTANCEOF(item, struct store_item));
-	}
+	clock_gettime(CLOCK_MONOTONIC, &tend);
+	printf("remove %.5fs\n",
+		((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) -
+		((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
 
 	uint64_t old_nkeys = nkeys;
 
@@ -153,6 +160,77 @@ int main(int argc, const char *argv[]) {
 	assert(old_nkeys == nkeys);
 
 	pmemobj_close(pop);
+}
+
+void run_bench_ntx(const char *path)
+{
+	PMEMobjpool *pop;
+	if (access(path, F_OK) != 0) {
+		if ((pop = pmemobj_create(path, POBJ_LAYOUT_NAME(data_store),
+			100*PMEMOBJ_MIN_POOL, 0666)) == NULL) {
+			perror("failed to create pool\n");
+			return;
+		}
+	} else {
+		if ((pop = pmemobj_open(path,
+				POBJ_LAYOUT_NAME(data_store))) == NULL) {
+			perror("failed to open pool\n");
+			return;
+		}
+	}
+	nkeys = 0;
+	TOID(struct store_root) root = POBJ_ROOT(pop, struct store_root);
+	if (!TOID_IS_NULL(D_RO(root)->map)) /* delete the map if it exists */
+		tree_map_delete(pop, &D_RW(root)->map);
+
+	struct timespec tstart={0,0}, tend={0,0};
+	clock_gettime(CLOCK_MONOTONIC, &tstart);
+	/* insert random items in a transaction */
+	tree_map_new(pop, &D_RW(root)->map);
+
+	for (int i = 0; i < MAX_INSERTS; ++i) {
+		/* new_store_item is transactional! */
+		tree_map_insert(pop, D_RO(root)->map, rand(),
+			OID_NULL);
+	}
+
+	clock_gettime(CLOCK_MONOTONIC, &tend);
+	printf("insert %.5fs\n",
+		((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) -
+		((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
+
+	/* count the items */
+	tree_map_foreach(D_RO(root)->map, get_keys, NULL);
+
+	clock_gettime(CLOCK_MONOTONIC, &tstart);
+
+	/* remove the items without outer transaction */
+	for (int i = 0; i < nkeys; ++i) {
+		tree_map_remove(pop, D_RO(root)->map, keys[i]);
+	}
+
+	clock_gettime(CLOCK_MONOTONIC, &tend);
+	printf("remove %.5fs\n",
+		((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) -
+		((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
+
+	uint64_t old_nkeys = nkeys;
+
+	/* tree should be empty */
+	tree_map_foreach(D_RO(root)->map, dec_keys, NULL);
+	assert(old_nkeys == nkeys);
+
+	pmemobj_close(pop);
+}
+
+int main(int argc, const char *argv[]) {
+	if (argc < 3) {
+		printf("usage: %s file-name1 file-name2\n", argv[0]);
+		return 1;
+	}
+
+	run_bench_tx(argv[1]);
+	run_bench_ntx(argv[2]);
 
 	return 0;
 }

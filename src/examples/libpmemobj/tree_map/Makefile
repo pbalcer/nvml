@@ -36,11 +36,11 @@
 PROGS = data_store_ctree data_store_btree data_store_rbtree
 
 INCDIR ?= ../../../include
-LIBDIR ?= ../../../debug
+LIBDIR ?= ../../../nondebug
 
 INCS = -I$(INCDIR)
 LIBS = -Wl,-rpath=$(LIBDIR) -L$(LIBDIR) -lpmemobj -pthread
-CFLAGS = -std=gnu99 -ggdb -Wall -Werror
+CFLAGS = -std=gnu99 -O3 -Wall -Werror
 CSTYLE = ../../../../utils/cstyle
 
 all:     TARGET = all
