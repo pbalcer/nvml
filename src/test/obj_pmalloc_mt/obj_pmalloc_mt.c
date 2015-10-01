@@ -39,14 +39,14 @@
 #include "pmalloc.h"
 #include "unittest.h"
 
-#define	THREADS 32
-#define	OPS_PER_THREAD 1000
+#define	THREADS 8
+#define	OPS_PER_THREAD 100000
 #define	ALLOC_SIZE 350
 #define	REALLOC_SIZE (ALLOC_SIZE * 3)
 #define	FRAGMENTATION 3
 
 struct root {
-	uint64_t offs[THREADS][OPS_PER_THREAD];
+	PMEMoid offs[THREADS][OPS_PER_THREAD];
 };
 
 struct worker_args {
@@ -61,8 +61,9 @@ alloc_worker(void *arg)
 	struct worker_args *a = arg;
 
 	for (int i = 0; i < OPS_PER_THREAD; ++i) {
-		pmalloc(a->pop, &a->r->offs[a->idx][i], ALLOC_SIZE, 0);
-		ASSERTne(a->r->offs[a->idx][i], 0);
+		pmemobj_alloc(a->pop, &a->r->offs[a->idx][i], ALLOC_SIZE, 1337, NULL, NULL);
+		//pmalloc(a->pop, &a->r->offs[a->idx][i], ALLOC_SIZE, 0);
+		//ASSERTne(a->r->offs[a->idx][i], 0);
 	}
 
 	return NULL;
@@ -74,8 +75,8 @@ realloc_worker(void *arg)
 	struct worker_args *a = arg;
 
 	for (int i = 0; i < OPS_PER_THREAD; ++i) {
-		prealloc(a->pop, &a->r->offs[a->idx][i], REALLOC_SIZE, 0);
-		ASSERTne(a->r->offs[a->idx][i], 0);
+	//	prealloc(a->pop, &a->r->offs[a->idx][i], REALLOC_SIZE, 0);
+	//	ASSERTne(a->r->offs[a->idx][i], 0);
 	}
 
 	return NULL;
@@ -87,8 +88,8 @@ free_worker(void *arg)
 	struct worker_args *a = arg;
 
 	for (int i = 0; i < OPS_PER_THREAD; ++i) {
-		pfree(a->pop, &a->r->offs[a->idx][i], 0);
-		ASSERTeq(a->r->offs[a->idx][i], 0);
+	//	pfree(a->pop, &a->r->offs[a->idx][i], 0);
+	//	ASSERTeq(a->r->offs[a->idx][i], 0);
 	}
 
 	return NULL;
@@ -133,8 +134,8 @@ main(int argc, char *argv[])
 	}
 
 	run_worker(alloc_worker, args);
-	run_worker(realloc_worker, args);
-	run_worker(free_worker, args);
+	//run_worker(realloc_worker, args);
+	//run_worker(free_worker, args);
 
 	DONE(NULL);
 }

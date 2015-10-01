@@ -51,6 +51,7 @@
 #include "obj.h"
 #include "heap_layout.h"
 #include "valgrind_internal.h"
+#include "vector.h"
 
 static struct cuckoo *pools;
 int _pobj_cache_invalidate;
@@ -502,6 +503,9 @@ pmemobj_descr_create(PMEMobjpool *pop, const char *layout, size_t poolsize)
 		ERR("!heap_init");
 		return -1;
 	}
+
+	struct vector *v = (struct vector *)pop->unused2;
+	vector_init(pop, v);
 
 	util_checksum(dscp, OBJ_DSC_P_SIZE, &pop->checksum, 1);
 
@@ -1107,6 +1111,12 @@ pmemobj_alloc(PMEMobjpool *pop, PMEMoid *oidp, size_t size,
 		ERR("allocation with size 0");
 		errno = EINVAL;
 		return -1;
+	}
+
+	if (type_num == 1337) {
+		struct vector *v = (struct vector *)pop->unused2;
+		vector_pushback_new(pop, v, oidp, 0, size, constructor, arg);
+		return 0;
 	}
 
 	return obj_alloc_construct(pop, oidp, size, type_num, constructor, arg);

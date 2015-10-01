@@ -41,7 +41,7 @@ LIBS_DIR=../..
 
 UT = ../unittest/libut.a
 LIBS = $(UT)
-LIBS += -L$(LIBS_DIR)/debug
+LIBS += -L$(LIBS_DIR)/nondebug
 LIBS += -luuid -pthread
 
 ifeq ($(LIBPMEMBLK), y)
@@ -93,9 +93,10 @@ extract_funcs = $(shell \
 
 INCS = -I../unittest -I../../include
 CFLAGS  = -std=gnu99
-CFLAGS += -ggdb
+//CFLAGS += -ggdb
+CFLAGS += -O2
 CFLAGS += -Wall
-CFLAGS += -Werror
+//CFLAGS += -Werror
 CFLAGS += -Wmissing-prototypes
 CFLAGS += -Wpointer-arith
 CFLAGS += -Wunused-macros

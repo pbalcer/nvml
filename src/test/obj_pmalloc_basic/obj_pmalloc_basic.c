@@ -123,6 +123,7 @@ test_oom_allocs(size_t size)
 		ASSERT(addr->ptr == 0);
 	}
 	ASSERT(count != 0);
+	printf("c %lu\n", count);
 	FREE(allocs);
 }
 

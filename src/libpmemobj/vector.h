@@ -31,65 +31,31 @@
  */
 
 /*
- * lane.h -- internal definitions for lanes
+ * vector.h -- internal definitions for persistent vector module
  */
-#define	LANE_SECTION_LEN 1024
 
-enum lane_section_type {
-	LANE_SECTION_ALLOCATOR,
-	LANE_SECTION_LIST,
-	LANE_SECTION_VECTOR,
-	LANE_SECTION_TRANSACTION,
 
-	MAX_LANE_SECTION
+#define MAX_LISTS 32
+
+struct vector {
+	PMEMrwlock lock;
+	uint64_t pool_uuid_lo;
+	uint64_t next;
+	uint64_t entries[MAX_LISTS];
 };
 
-struct lane_section_layout {
-	unsigned char data[LANE_SECTION_LEN];
+struct vector_entry {
+	uint64_t pos;
 };
 
-struct lane_section {
-	/* persistent */
-	struct lane_section_layout *layout;
+#define VECTOR_ENTRY(name)\
+struct vector_entry
 
-	void *runtime;
-};
 
-struct lane_layout {
-	struct lane_section_layout sections[MAX_LANE_SECTION];
-};
-
-struct lane {
-	/* volatile state */
-	pthread_mutex_t *lock;
-	struct lane_section sections[MAX_LANE_SECTION];
-};
-
-typedef int (*section_layout_op)(PMEMobjpool *pop,
-	struct lane_section_layout *layout);
-typedef int (*section_op)(PMEMobjpool *pop, struct lane_section *section);
-typedef int (*section_global_op)(PMEMobjpool *pop);
-
-struct section_operations {
-	section_op construct;
-	section_op destruct;
-	section_layout_op check;
-	section_layout_op recover;
-	section_global_op boot;
-};
-
-extern struct section_operations *section_ops[MAX_LANE_SECTION];
-extern __thread int lane_idx;
-
-int lane_boot(PMEMobjpool *pop);
-int lane_cleanup(PMEMobjpool *pop);
-int lane_recover_and_section_boot(PMEMobjpool *pop);
-int lane_check(PMEMobjpool *pop);
-
-int lane_hold(PMEMobjpool *pop, struct lane_section **section,
-	enum lane_section_type type);
-int lane_release(PMEMobjpool *pop);
-
-#define	SECTION_PARM(n, ops)\
-__attribute__((constructor)) static void _section_parm_##n(void)\
-{ section_ops[n] = ops; }
+int vector_foreach(PMEMobjpool *pop, struct vector *v, void (*callback)(PMEMoid oid));
+int vector_remove(PMEMobjpool *pop, struct vector *v, PMEMoid oid, ptrdiff_t entry_offset);
+int vector_fix(PMEMobjpool *pop, struct vector *v, ptrdiff_t entry_offset);
+int vector_pushback(PMEMobjpool *pop, struct vector *v, PMEMoid oid, ptrdiff_t entry_offset);
+int vector_pushback_new(PMEMobjpool *pop, struct vector *v, PMEMoid *oid, ptrdiff_t entry_offset, size_t size, void (*constructor)(PMEMobjpool *pop, void *ptr, void *arg), void *arg);
+void vector_new_constructor(PMEMobjpool *pop, void *ptr, void *arg);
+void vector_init(PMEMobjpool *pop, struct vector *v);
