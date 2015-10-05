@@ -45,6 +45,7 @@
 #include "util.h"
 #include "out.h"
 #include "redo.h"
+#include "vector.h"
 #include "list.h"
 #include "obj.h"
 #include "valgrind_internal.h"

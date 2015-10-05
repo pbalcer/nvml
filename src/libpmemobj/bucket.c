@@ -50,6 +50,7 @@
 #include "ctree.h"
 #include "lane.h"
 #include "list.h"
+#include "vector.h"
 #include "obj.h"
 #include "valgrind_internal.h"
 

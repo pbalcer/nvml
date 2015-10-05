@@ -33,7 +33,7 @@
 /*
  * list.h -- internal definitions for persistent atomic lists module
  */
-
+#if 0
 #define	REDO_NUM_ENTRIES \
 ((LANE_SECTION_LEN - 2 * sizeof (uint64_t)) / sizeof (struct redo_log))
 
@@ -97,3 +97,4 @@ int list_move(PMEMobjpool *pop,
 int list_move_oob(PMEMobjpool *pop,
 	struct list_head *head_old, struct list_head *head_new,
 	PMEMoid oid);
+#endif

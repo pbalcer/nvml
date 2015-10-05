@@ -116,16 +116,14 @@ vector_new_constructor(PMEMobjpool *pop, void *ptr, void *arg)
 	ventry->pos = vec_args->pos;
 	pmemobj_persist(pop, &ventry->pos, sizeof (ventry->pos));
 
-	vec_args->constructor(pop, ptr, vec_args->arg);
+	vec_args->constructor(pop, (char*)ptr + sizeof (struct oob_header), vec_args->arg);
 }
-
 
 struct vector_lane_section {
 	uint64_t where;
 	uint64_t what;
 	struct redo_log redo[4];
 };
-
 
 int
 vector_pushback_new(PMEMobjpool *pop, struct vector *v, PMEMoid *oid, ptrdiff_t entry_offset, size_t size, void (*constructor)(PMEMobjpool *pop, void *ptr, void *arg), void *arg)
@@ -150,10 +148,12 @@ vector_pushback_new(PMEMobjpool *pop, struct vector *v, PMEMoid *oid, ptrdiff_t 
 
 	if (oid != NULL) {
 		sec->what = n;
+		pmemobj_persist(pop, &sec->what, sizeof (sec->what));
 		sec->where = oid->off;
+		pmemobj_persist(pop, &sec->where, sizeof (sec->where));
 	}
-	pmemobj_persist(pop, &sec->where, sizeof (uint64_t) * 2);
-	int ret = pmalloc_construct(pop, dest, size, constructor, &vec_args, 0);
+
+	int ret = pmalloc_construct(pop, dest, size, vector_new_constructor, &vec_args, 0);
 	pmemobj_rwlock_unlock(pop, &v->lock);
 
 	if (lane_release(pop) != 0) {
@@ -227,11 +227,14 @@ vector_fix(PMEMobjpool *pop, struct vector *v, ptrdiff_t entry_offset)
 }
 
 int
-vector_remove(PMEMobjpool *pop, struct vector *v, PMEMoid oid, ptrdiff_t entry_offset)
+vector_remove(PMEMobjpool *pop, struct vector *v, PMEMoid *oid, ptrdiff_t entry_offset)
 {
 	pmemobj_rwlock_wrlock(pop, &v->lock);
 
-	struct vector_entry *ventry = (void *)((char*)pmemobj_direct(oid) + entry_offset);
+	PMEMoid real = *oid;
+	real.off -= sizeof (struct oob_header);
+
+	struct vector_entry *ventry = (void *)((char*)pmemobj_direct(real) + entry_offset);
 
 	uint64_t tab;
 	uint64_t tab_idx;
@@ -249,11 +252,15 @@ vector_remove(PMEMobjpool *pop, struct vector *v, PMEMoid oid, ptrdiff_t entry_o
 		r.off = vector_get_tab(pop, v->entries[ntab])[ntab_idx];
 		r.pool_uuid_lo = v->pool_uuid_lo;
 
-		struct vector_entry *rventry = (void *)((char*)pmemobj_direct(oid) + entry_offset);
+		struct vector_entry *rventry = (void *)((char*)pmemobj_direct(r) + entry_offset);
+
+		oid->off = 0;
+		pmemobj_persist(pop, &oid->off, sizeof (oid->off));
 
 		rventry->pos = ventry->pos;
 		pmemobj_persist(pop, &rventry->pos, sizeof (rventry->pos));
 
+		//vector_get_tab(pop, v->entries[ntab])[ntab_idx] = 0;
 		vector_get_tab(pop, v->entries[tab])[tab_idx] = r.off;
 	}
 
@@ -276,7 +283,7 @@ vector_foreach(PMEMobjpool *pop, struct vector *v, void (*callback)(PMEMoid oid)
 		uint64_t tab;
 		uint64_t tab_idx;
 		vector_tab_from_idx(v, i, &tab, &tab_idx);
-		oid.off = vector_get_tab(pop, v->entries[tab])[tab_idx];
+		oid.off = vector_get_tab(pop, v->entries[tab])[tab_idx] + sizeof (struct oob_header);
 		if (oid.off != 0)
 			callback(oid);
 	}
@@ -284,6 +291,30 @@ vector_foreach(PMEMobjpool *pop, struct vector *v, void (*callback)(PMEMoid oid)
 	pmemobj_rwlock_unlock(pop, &v->lock);
 
 	return 0;
+}
+
+PMEMoid
+vector_get(PMEMobjpool *pop, struct vector *v, uint64_t index)
+{
+	if (index >= v->next)
+		return OID_NULL;
+
+	uint64_t tab;
+	uint64_t tab_idx;
+	vector_tab_from_idx(v, index, &tab, &tab_idx);
+	if (v->entries[tab] == 0)
+		return OID_NULL;
+
+	PMEMoid oid;
+	oid.off = vector_get_tab(pop, v->entries[tab])[tab_idx];
+	if (oid.off == 0)
+		return OID_NULL;
+
+	oid.off += sizeof (struct oob_header);
+
+	oid.pool_uuid_lo = v->pool_uuid_lo;
+
+	return oid;
 }
 
 /*
@@ -310,6 +341,7 @@ lane_vector_destruct(PMEMobjpool *pop, struct lane_section *section)
 static int
 lane_vector_recovery(PMEMobjpool *pop, struct lane_section_layout *section)
 {
+	/* XXX what/where */
 	return 0;
 }
 

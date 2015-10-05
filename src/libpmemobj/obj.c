@@ -48,10 +48,10 @@
 #include "list.h"
 #include "pmalloc.h"
 #include "cuckoo.h"
+#include "vector.h"
 #include "obj.h"
 #include "heap_layout.h"
 #include "valgrind_internal.h"
-#include "vector.h"
 
 static struct cuckoo *pools;
 int _pobj_cache_invalidate;
@@ -504,8 +504,12 @@ pmemobj_descr_create(PMEMobjpool *pop, const char *layout, size_t poolsize)
 		return -1;
 	}
 
-	struct vector *v = (struct vector *)pop->unused2;
-	vector_init(pop, v);
+	struct object_store *ostore = store;
+	pop->uuid_lo = pmemobj_get_uuid_lo(pop);
+	for (int i = 0; i < PMEMOBJ_NUM_OID_TYPES; ++i) {
+		vector_init(pop, &ostore->bytype[i].vec);
+	}
+	vector_init(pop, &ostore->root.vec);
 
 	util_checksum(dscp, OBJ_DSC_P_SIZE, &pop->checksum, 1);
 
@@ -1082,15 +1086,17 @@ obj_alloc_construct(PMEMobjpool *pop, PMEMoid *oidp, size_t size,
 		return -1;
 	}
 
-	struct list_head *lhead = &pop->store->bytype[type_num].head;
+//	struct list_head *lhead = &pop->store->bytype[type_num].head;
+	struct vector *v = &pop->store->bytype[type_num].vec;
 	struct carg_bytype carg;
 
 	carg.user_type = type_num;
 	carg.constructor = constructor;
 	carg.arg = arg;
 
-	return list_insert_new(pop, lhead, 0, NULL, OID_NULL, 0, size,
-				constructor_alloc_bytype, &carg, oidp);
+	return vector_pushback_new(pop, v, oidp, 0, size, constructor_alloc_bytype, &carg);
+	//return list_insert_new(pop, lhead, 0, NULL, OID_NULL, 0, size,
+	//			constructor_alloc_bytype, &carg, oidp);
 }
 
 /*
@@ -1111,12 +1117,6 @@ pmemobj_alloc(PMEMobjpool *pop, PMEMoid *oidp, size_t size,
 		ERR("allocation with size 0");
 		errno = EINVAL;
 		return -1;
-	}
-
-	if (type_num == 1337) {
-		struct vector *v = (struct vector *)pop->unused2;
-		vector_pushback_new(pop, v, oidp, 0, size, constructor, arg);
-		return 0;
 	}
 
 	return obj_alloc_construct(pop, oidp, size, type_num, constructor, arg);
@@ -1187,8 +1187,9 @@ obj_free(PMEMobjpool *pop, PMEMoid *oidp)
 
 	ASSERT(pobj->user_type < PMEMOBJ_NUM_OID_TYPES);
 
-	void *lhead = &pop->store->bytype[pobj->user_type].head;
-	if (list_remove_free(pop, lhead, 0, NULL, oidp))
+	struct vector *vec = &pop->store->bytype[pobj->user_type].vec;
+
+	if (vector_remove(pop, vec, oidp, 0))
 		LOG(2, "list_remove_free failed");
 }
 
@@ -1202,7 +1203,7 @@ obj_realloc_common(PMEMobjpool *pop, struct object_store *store,
 	void (*constr_alloc)(PMEMobjpool *pop, void *ptr, void *arg),
 	void (*constr_realloc)(PMEMobjpool *pop, void *ptr, void *arg))
 {
-
+#if 0
 	/* if OID is NULL just allocate memory */
 	if (OBJ_OID_IS_NULL(*oidp)) {
 		struct carg_alloc carg;
@@ -1266,6 +1267,8 @@ obj_realloc_common(PMEMobjpool *pop, struct object_store *store,
 
 		return ret;
 	}
+#endif
+	return 0;
 }
 
 /*
@@ -1338,7 +1341,7 @@ constructor_zrealloc(PMEMobjpool *pop, void *ptr, void *arg)
 		pop->memset_persist(pop, new_data_ptr, 0, grow_len);
 	}
 }
-
+#if 0
 /*
  * constructor_zrealloc_root -- (internal) constructor for pmemobj_root
  */
@@ -1356,7 +1359,7 @@ constructor_zrealloc_root(PMEMobjpool *pop, void *ptr, void *arg)
 	VALGRIND_REMOVE_FROM_TX(OOB_HEADER_FROM_PTR(ptr),
 		((struct carg_realloc *)arg)->new_size + OBJ_OOB_SIZE);
 }
-
+#endif
 /*
  * pmemobj_realloc -- resizes an existing object
  */
@@ -1610,13 +1613,12 @@ obj_alloc_root(PMEMobjpool *pop, struct object_store *store, size_t size)
 {
 	LOG(3, "pop %p store %p size %zu", pop, store, size);
 
-	struct list_head *lhead = &store->root.head;
+	struct vector *vec = &store->root.vec;
 	struct carg_root carg;
 
 	carg.size = size;
 
-	return list_insert_new(pop, lhead, 0, NULL, OID_NULL, 0,
-				size, constructor_alloc_root, &carg, NULL);
+	return vector_pushback_new(pop, vec, NULL, 0, size, constructor_alloc_root, &carg);
 }
 
 /*
@@ -1626,6 +1628,7 @@ static int
 obj_realloc_root(PMEMobjpool *pop, struct object_store *store, size_t size,
 	size_t old_size)
 {
+#if 0
 	LOG(3, "pop %p store %p size %zu old_size %zu",
 		pop, store, size, old_size);
 
@@ -1641,6 +1644,8 @@ obj_realloc_root(PMEMobjpool *pop, struct object_store *store, size_t size,
 	return list_realloc(pop, lhead, 0, NULL, size,
 				constructor_zrealloc_root, &carg,
 				size_offset, size, &lhead->pe_first);
+#endif
+	return 0;
 }
 
 /*
@@ -1651,9 +1656,11 @@ pmemobj_root_size(PMEMobjpool *pop)
 {
 	LOG(3, "pop %p", pop);
 
-	if (pop->store->root.head.pe_first.off) {
-		struct oob_header *ro = OOB_HEADER_FROM_OID(pop,
-						pop->store->root.head.pe_first);
+	struct vector *vec = &pop->store->root.vec;
+	PMEMoid oid = vector_get(pop, vec, 0);
+
+	if (!OID_IS_NULL(oid)) {
+		struct oob_header *ro = OOB_HEADER_FROM_OID(pop, oid);
 		return ro->size;
 	} else
 		return 0;
@@ -1673,10 +1680,11 @@ pmemobj_root(PMEMobjpool *pop, size_t size)
 		return OID_NULL;
 	}
 
-	PMEMoid root;
+	struct vector *vec = &pop->store->root.vec;
+	PMEMoid root = vector_get(pop, vec, 0);
 
 	pmemobj_mutex_lock(pop, &pop->rootlock);
-	if (pop->store->root.head.pe_first.off == 0)
+	if (OID_IS_NULL(root))
 		/* root object list is empty */
 		obj_alloc_root(pop, pop->store, size);
 	else {
@@ -1688,7 +1696,7 @@ pmemobj_root(PMEMobjpool *pop, size_t size)
 				return OID_NULL;
 			}
 	}
-	root = pop->store->root.head.pe_first;
+	root = vector_get(pop, vec, 0);
 	pmemobj_mutex_unlock(pop, &pop->rootlock);
 	return root;
 }
@@ -1708,8 +1716,10 @@ pmemobj_first(PMEMobjpool *pop, unsigned int type_num)
 		    PMEMOBJ_NUM_OID_TYPES - 1);
 		return OID_NULL;
 	}
+	struct vector *vec = &pop->store->bytype[type_num].vec;
+	PMEMoid first = vector_get(pop, vec, 0);
 
-	return pop->store->bytype[type_num].head.pe_first;
+	return first;
 }
 
 /*
@@ -1733,11 +1743,9 @@ pmemobj_next(PMEMoid oid)
 
 	ASSERT(user_type < PMEMOBJ_NUM_OID_TYPES);
 
-	if (pobj->oob.pe_next.off !=
-			pop->store->bytype[user_type].head.pe_first.off)
-		return pobj->oob.pe_next;
-	else
-		return OID_NULL;
+	struct vector *vec = &pop->store->bytype[user_type].vec;
+
+	return vector_get(pop, vec, pobj->entry.pos + 1);
 }
 
 
@@ -1748,6 +1756,7 @@ int
 pmemobj_list_insert(PMEMobjpool *pop, size_t pe_offset, void *head,
 		    PMEMoid dest, int before, PMEMoid oid)
 {
+#if 0
 	LOG(3, "pop %p pe_offset %zu head %p dest.off 0x%016jx before %d"
 	    " oid.off 0x%016jx",
 	    pop, pe_offset, head, dest.off, before, oid.off);
@@ -1758,6 +1767,8 @@ pmemobj_list_insert(PMEMobjpool *pop, size_t pe_offset, void *head,
 	ASSERT(OBJ_OID_IS_VALID(pop, dest));
 
 	return list_insert(pop, pe_offset, head, dest, before, oid);
+#endif
+	return 0;
 }
 
 /*
@@ -1773,7 +1784,7 @@ pmemobj_list_insert_new(PMEMobjpool *pop, size_t pe_offset, void *head,
 	LOG(3, "pop %p pe_offset %zu head %p dest.off 0x%016jx before %d"
 	    " size %zu type_num %u",
 	    pop, pe_offset, head, dest.off, before, size, type_num);
-
+#if 0
 	/* log notice message if used inside a transaction */
 	_POBJ_DEBUG_NOTICE_IN_TX();
 	ASSERT(OBJ_OID_IS_VALID(pop, dest));
@@ -1804,6 +1815,8 @@ pmemobj_list_insert_new(PMEMobjpool *pop, size_t pe_offset, void *head,
 			pe_offset, head, dest, before,
 			size, constructor_alloc_bytype, &carg, &retoid);
 	return retoid;
+#endif
+	return OID_NULL;
 }
 
 /*
@@ -1815,7 +1828,7 @@ pmemobj_list_remove(PMEMobjpool *pop, size_t pe_offset, void *head,
 {
 	LOG(3, "pop %p pe_offset %zu head %p oid.off 0x%016jx free %d",
 	    pop, pe_offset, head, oid.off, free);
-
+#if 0
 	/* log notice message if used inside a transaction */
 	_POBJ_DEBUG_NOTICE_IN_TX();
 	ASSERT(OBJ_OID_IS_VALID(pop, oid));
@@ -1829,6 +1842,8 @@ pmemobj_list_remove(PMEMobjpool *pop, size_t pe_offset, void *head,
 		return list_remove_free(pop, lhead, pe_offset, head, &oid);
 	} else
 		return list_remove(pop, pe_offset, head, oid);
+#endif
+	return 0;
 }
 
 /*
@@ -1839,6 +1854,7 @@ pmemobj_list_move(PMEMobjpool *pop, size_t pe_old_offset, void *head_old,
 			size_t pe_new_offset, void *head_new,
 			PMEMoid dest, int before, PMEMoid oid)
 {
+#if 0
 	LOG(3, "pop %p pe_old_offset %zu pe_new_offset %zu"
 	    " head_old %p head_new %p dest.off 0x%016jx"
 	    " before %d oid.off 0x%016jx",
@@ -1854,6 +1870,8 @@ pmemobj_list_move(PMEMobjpool *pop, size_t pe_old_offset, void *head_old,
 	return list_move(pop, pe_old_offset, head_old,
 				pe_new_offset, head_new,
 				dest, before, oid);
+#endif
+	return 0;
 }
 
 /*

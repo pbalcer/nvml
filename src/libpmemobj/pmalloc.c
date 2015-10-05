@@ -41,6 +41,7 @@
 #include "pmalloc.h"
 #include "lane.h"
 #include "redo.h"
+#include "vector.h"
 #include "list.h"
 #include "obj.h"
 #include "out.h"

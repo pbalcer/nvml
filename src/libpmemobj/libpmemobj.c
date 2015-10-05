@@ -45,6 +45,7 @@
 #include "lane.h"
 #include "redo.h"
 #include "list.h"
+#include "vector.h"
 #include "obj.h"
 
 /*

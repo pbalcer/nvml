@@ -100,7 +100,7 @@
 	((oid).off - OBJ_OOB_SIZE + offsetof(struct oob_header, field))
 
 #define	OBJ_STORE_ITEM_PADDING\
-	(_POBJ_CL_ALIGNMENT - (sizeof (struct list_head) % _POBJ_CL_ALIGNMENT))
+	(_POBJ_CL_ALIGNMENT - (sizeof (struct vector) % _POBJ_CL_ALIGNMENT))
 
 typedef void (*persist_local_fn)(void *, size_t);
 typedef void (*flush_local_fn)(void *, size_t);
@@ -170,11 +170,12 @@ struct pmemobjpool {
  * together with allocator's header (of size 16B) located just before it.
  */
 struct oob_header {
-	struct list_entry oob;
+	//struct list_entry oob;
+	VECTOR_ENTRY entry;
 	size_t size;		/* used only in root object */
 	uint16_t internal_type;
 	uint16_t user_type;
-	uint8_t padding[4];
+	uint8_t padding[28];
 };
 
 enum internal_type {
@@ -186,7 +187,7 @@ enum internal_type {
 
 /* single object store item */
 struct object_store_item {
-	struct list_head head;
+	struct vector vec;
 	uint8_t padding[OBJ_STORE_ITEM_PADDING];
 };
 
@@ -216,12 +217,13 @@ struct tx_range_cache {
 
 struct lane_tx_layout {
 	uint64_t state;
-	struct list_head undo_alloc;
-	struct list_head undo_free;
-	struct list_head undo_set;
-	struct list_head undo_set_cache;
+	struct vector undo_alloc;
+	struct vector undo_free;
+	struct vector undo_set;
+	struct vector undo_set_cache;
 };
 
+/*
 static inline PMEMoid
 oob_list_next(PMEMobjpool *pop, struct list_head *head, PMEMoid oid)
 {
@@ -241,6 +243,7 @@ oob_list_last(PMEMobjpool *pop, struct list_head *head)
 	struct oob_header *oobh = OOB_HEADER_FROM_OID(pop, head->pe_first);
 	return oobh->oob.pe_prev;
 }
+*/
 
 /*
  * pmemobj_get_uuid_lo -- (internal) evaluates XOR sum of least significant

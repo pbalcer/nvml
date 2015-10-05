@@ -48,14 +48,13 @@ struct vector_entry {
 	uint64_t pos;
 };
 
-#define VECTOR_ENTRY(name)\
-struct vector_entry
-
+#define VECTOR_ENTRY struct vector_entry
 
 int vector_foreach(PMEMobjpool *pop, struct vector *v, void (*callback)(PMEMoid oid));
-int vector_remove(PMEMobjpool *pop, struct vector *v, PMEMoid oid, ptrdiff_t entry_offset);
+int vector_remove(PMEMobjpool *pop, struct vector *v, PMEMoid *oid, ptrdiff_t entry_offset);
 int vector_fix(PMEMobjpool *pop, struct vector *v, ptrdiff_t entry_offset);
 int vector_pushback(PMEMobjpool *pop, struct vector *v, PMEMoid oid, ptrdiff_t entry_offset);
 int vector_pushback_new(PMEMobjpool *pop, struct vector *v, PMEMoid *oid, ptrdiff_t entry_offset, size_t size, void (*constructor)(PMEMobjpool *pop, void *ptr, void *arg), void *arg);
+PMEMoid vector_get(PMEMobjpool *pop, struct vector *v, uint64_t index);
 void vector_new_constructor(PMEMobjpool *pop, void *ptr, void *arg);
 void vector_init(PMEMobjpool *pop, struct vector *v);

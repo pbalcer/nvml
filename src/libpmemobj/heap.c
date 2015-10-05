@@ -48,6 +48,7 @@
 #include "lane.h"
 #include "out.h"
 #include "list.h"
+#include "vector.h"
 #include "obj.h"
 #include "pmalloc.h"
 #include "valgrind_internal.h"
