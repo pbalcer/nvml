@@ -93,8 +93,7 @@ extract_funcs = $(shell \
 
 INCS = -I../unittest -I../../include
 CFLAGS  = -std=gnu99
-//CFLAGS += -ggdb
-CFLAGS += -O2
+CFLAGS += -ggdb
 CFLAGS += -Wall
 //CFLAGS += -Werror
 CFLAGS += -Wmissing-prototypes

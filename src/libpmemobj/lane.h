@@ -33,7 +33,7 @@
 /*
  * lane.h -- internal definitions for lanes
  */
-#define	LANE_SECTION_LEN 1024
+#define	LANE_SECTION_LEN 1536
 
 enum lane_section_type {
 	LANE_SECTION_ALLOCATOR,

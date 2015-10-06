@@ -235,9 +235,10 @@ tree_map_insert(PMEMobjpool *pop,
 	TOID(struct tree_map) map, uint64_t key, PMEMoid value)
 {
 	int ret = 0;
-
+	TOID(struct tree_map_node) n;
+	TOID(struct tree_map_node) dst = RB_FIRST(map);
 	TX_BEGIN(pop) {
-		TOID(struct tree_map_node) n = TX_ZNEW(struct tree_map_node);
+		n = TX_ZNEW(struct tree_map_node);
 		D_RW(n)->key = key;
 		D_RW(n)->value = value;
 

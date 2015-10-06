@@ -489,7 +489,8 @@ pmemobj_descr_create(PMEMobjpool *pop, const char *layout, size_t poolsize)
 		pop->nlanes * sizeof (struct lane_layout);
 	pop->obj_store_size = (PMEMOBJ_NUM_OID_TYPES + 1) *
 		sizeof (struct object_store_item);
-		/* + 1 - for root object */
+
+	/* + 1 - for root object */
 	void *store = (void *)((uintptr_t)pop + pop->obj_store_offset);
 	memset(store, 0, pop->obj_store_size);
 	pmem_msync(store, pop->obj_store_size);
@@ -1684,10 +1685,10 @@ pmemobj_root(PMEMobjpool *pop, size_t size)
 	PMEMoid root = vector_get(pop, vec, 0);
 
 	pmemobj_mutex_lock(pop, &pop->rootlock);
-	if (OID_IS_NULL(root))
+	if (OID_IS_NULL(root)) {
 		/* root object list is empty */
 		obj_alloc_root(pop, pop->store, size);
-	else {
+	} else {
 		size_t old_size = pmemobj_root_size(pop);
 		if (size > old_size)
 			if (obj_realloc_root(pop, pop->store, size, old_size)) {

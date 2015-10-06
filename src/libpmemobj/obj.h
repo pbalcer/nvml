@@ -224,28 +224,6 @@ struct lane_tx_layout {
 };
 
 /*
-static inline PMEMoid
-oob_list_next(PMEMobjpool *pop, struct list_head *head, PMEMoid oid)
-{
-	struct oob_header *oobh = OOB_HEADER_FROM_OID(pop, oid);
-	if (head->pe_first.off == oobh->oob.pe_next.off)
-		return OID_NULL;
-
-	return oobh->oob.pe_next;
-}
-
-static inline PMEMoid
-oob_list_last(PMEMobjpool *pop, struct list_head *head)
-{
-	if (OBJ_OID_IS_NULL(head->pe_first))
-		return OID_NULL;
-
-	struct oob_header *oobh = OOB_HEADER_FROM_OID(pop, head->pe_first);
-	return oobh->oob.pe_prev;
-}
-*/
-
-/*
  * pmemobj_get_uuid_lo -- (internal) evaluates XOR sum of least significant
  * 8 bytes with most significant 8 bytes.
  */

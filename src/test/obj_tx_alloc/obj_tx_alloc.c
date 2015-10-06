@@ -532,12 +532,13 @@ main(int argc, char *argv[])
 				S_IWUSR | S_IRUSR)) == NULL)
 		FATAL("!pmemobj_create");
 
+	if (0) {
 	do_tx_root(pop);
 	VALGRIND_WRITE_STATS;
 	do_tx_alloc_no_tx(pop);
-	VALGRIND_WRITE_STATS;
+	VALGRIND_WRITE_STATS;}
 	do_tx_alloc_commit(pop);
-	VALGRIND_WRITE_STATS;
+	VALGRIND_WRITE_STATS;if (0) {
 	do_tx_alloc_abort(pop);
 	VALGRIND_WRITE_STATS;
 	do_tx_alloc_zerolen(pop);
@@ -559,7 +560,7 @@ main(int argc, char *argv[])
 	do_tx_alloc_abort_after_nested(pop);
 	VALGRIND_WRITE_STATS;
 	do_tx_alloc_oom(pop);
-	VALGRIND_WRITE_STATS;
+	VALGRIND_WRITE_STATS;}
 
 	pmemobj_close(pop);
 
