@@ -1095,7 +1095,7 @@ obj_alloc_construct(PMEMobjpool *pop, PMEMoid *oidp, size_t size,
 	carg.constructor = constructor;
 	carg.arg = arg;
 
-	return vector_pushback_new(pop, v, oidp, 0, size, constructor_alloc_bytype, &carg);
+	return vector_pushback_new(pop, v, oidp, size, constructor_alloc_bytype, &carg);
 	//return list_insert_new(pop, lhead, 0, NULL, OID_NULL, 0, size,
 	//			constructor_alloc_bytype, &carg, oidp);
 }
@@ -1190,7 +1190,7 @@ obj_free(PMEMobjpool *pop, PMEMoid *oidp)
 
 	struct vector *vec = &pop->store->bytype[pobj->user_type].vec;
 
-	if (vector_remove(pop, vec, oidp, 0))
+	if (vector_remove(pop, vec, oidp))
 		LOG(2, "list_remove_free failed");
 }
 
@@ -1619,7 +1619,7 @@ obj_alloc_root(PMEMobjpool *pop, struct object_store *store, size_t size)
 
 	carg.size = size;
 
-	return vector_pushback_new(pop, vec, NULL, 0, size, constructor_alloc_root, &carg);
+	return vector_pushback_new(pop, vec, NULL, size, constructor_alloc_root, &carg);
 }
 
 /*
@@ -1658,7 +1658,7 @@ pmemobj_root_size(PMEMobjpool *pop)
 	LOG(3, "pop %p", pop);
 
 	struct vector *vec = &pop->store->root.vec;
-	PMEMoid oid = vector_get(pop, vec, 0);
+	PMEMoid oid = vector_get_first(pop, vec);
 
 	if (!OID_IS_NULL(oid)) {
 		struct oob_header *ro = OOB_HEADER_FROM_OID(pop, oid);
@@ -1682,7 +1682,7 @@ pmemobj_root(PMEMobjpool *pop, size_t size)
 	}
 
 	struct vector *vec = &pop->store->root.vec;
-	PMEMoid root = vector_get(pop, vec, 0);
+	PMEMoid root = vector_get_first(pop, vec);
 
 	pmemobj_mutex_lock(pop, &pop->rootlock);
 	if (OID_IS_NULL(root)) {
@@ -1697,7 +1697,7 @@ pmemobj_root(PMEMobjpool *pop, size_t size)
 				return OID_NULL;
 			}
 	}
-	root = vector_get(pop, vec, 0);
+	root = vector_get_first(pop, vec);
 	pmemobj_mutex_unlock(pop, &pop->rootlock);
 	return root;
 }
@@ -1718,7 +1718,7 @@ pmemobj_first(PMEMobjpool *pop, unsigned int type_num)
 		return OID_NULL;
 	}
 	struct vector *vec = &pop->store->bytype[type_num].vec;
-	PMEMoid first = vector_get(pop, vec, 0);
+	PMEMoid first = vector_get_first(pop, vec);
 
 	return first;
 }
@@ -1746,7 +1746,7 @@ pmemobj_next(PMEMoid oid)
 
 	struct vector *vec = &pop->store->bytype[user_type].vec;
 
-	return vector_get(pop, vec, pobj->entry.pos + 1);
+	return vector_next(pop, vec, oid);
 }
 
 

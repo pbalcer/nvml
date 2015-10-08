@@ -38,9 +38,9 @@ TOP := ../$(TOP_SRC)
 CSTYLE = $(TOP)utils/cstyle
 
 INCDIR ?= $(TOP_SRC)include
-LIBDIR ?= $(TOP_SRC)nondebug
+LIBDIR ?= $(TOP_SRC)debug
 
-CFLAGS = -std=gnu99 -O3 -Werror
+CFLAGS = -std=gnu99 -ggdb -Werror
 LDFLAGS = -Wl,-rpath=$(LIBDIR) -L$(LIBDIR)
 INCS = -I$(INCDIR)
 

@@ -127,14 +127,13 @@ int main(int argc, const char *argv[]) {
 	TX_BEGIN(pop) {
 		tree_map_new(pop, &D_RW(root)->map);
 
-		for (int i = 0; i < MAX_INSERTS; ++i) {
+		for (int i = 1; i < MAX_INSERTS; ++i) {
 			/* new_store_item is transactional! */
-			tree_map_insert(pop, D_RO(root)->map, rand(),
-				OID_NULL);
+			tree_map_insert(pop, D_RO(root)->map, i,
+				new_store_item().oid);
 		}
-
 	} TX_END
-#if 0
+//#if 0
 	/* count the items */
 	tree_map_foreach(D_RO(root)->map, get_keys, NULL);
 	//printf("count: %lu\n", nkeys);
@@ -144,7 +143,7 @@ int main(int argc, const char *argv[]) {
 		PMEMoid item = tree_map_remove(pop, D_RO(root)->map, keys[i]);
 
 		assert(!OID_IS_NULL(item));
-		//assert(OID_INSTANCEOF(item, struct store_item));
+		assert(OID_INSTANCEOF(item, struct store_item));
 	}
 
 
@@ -152,8 +151,9 @@ int main(int argc, const char *argv[]) {
 
 	/* tree should be empty */
 	tree_map_foreach(D_RO(root)->map, dec_keys, NULL);
+	printf("%lu %lu\n", old_nkeys, nkeys);
 	assert(old_nkeys == nkeys);
-#endif
+//#endif
 	pmemobj_close(pop);
 
 	return 0;

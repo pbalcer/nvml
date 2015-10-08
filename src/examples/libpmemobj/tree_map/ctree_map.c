@@ -196,7 +196,7 @@ tree_map_get_leaf(TOID(struct tree_map) map,
 
 	return NULL;
 }
-
+#include <stdio.h>
 /*
  * tree_map_remove -- removes key-value pair from the map
  */
@@ -234,6 +234,9 @@ tree_map_remove(PMEMobjpool *pop, TOID(struct tree_map) map, uint64_t key)
 				D_RO(node)->entries[0].key == leaf->key];
 
 			TX_FREE(node);
+		} TX_ONABORT {
+			assert(0);
+			printf("ABORT!\n");
 		} TX_END
 	}
 

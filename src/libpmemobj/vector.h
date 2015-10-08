@@ -41,6 +41,7 @@ struct vector {
 	PMEMrwlock lock;
 	uint64_t pool_uuid_lo;
 	uint64_t next;
+	uint64_t size;
 	uint64_t entries[MAX_LISTS];
 };
 
@@ -51,14 +52,15 @@ struct vector_entry {
 #define VECTOR_ENTRY struct vector_entry
 
 int vector_foreach(PMEMobjpool *pop, struct vector *v, void (*callback)(PMEMoid oid));
-int vector_remove(PMEMobjpool *pop, struct vector *v, PMEMoid *oid, ptrdiff_t entry_offset);
-int vector_fix(PMEMobjpool *pop, struct vector *v, ptrdiff_t entry_offset);
-int vector_pushback(PMEMobjpool *pop, struct vector *v, PMEMoid oid, ptrdiff_t entry_offset);
-int vector_pushback_new(PMEMobjpool *pop, struct vector *v, PMEMoid *oid, ptrdiff_t entry_offset, size_t size, void (*constructor)(PMEMobjpool *pop, void *ptr, void *arg), void *arg);
+int vector_remove(PMEMobjpool *pop, struct vector *v, PMEMoid *oid);
+int vector_fix(PMEMobjpool *pop, struct vector *v);
+int vector_pushback_new(PMEMobjpool *pop, struct vector *v, PMEMoid *oid, size_t size, void (*constructor)(PMEMobjpool *pop, void *ptr, void *arg), void *arg);
 int vector_move(PMEMobjpool *pop, struct vector *ov, struct vector *nv, PMEMoid oid);
 int vector_is_empty(struct vector *v);
+void vector_reinit(PMEMobjpool *pop, struct vector *v);
 PMEMoid vector_get(PMEMobjpool *pop, struct vector *v, uint64_t index);
 PMEMoid vector_next(PMEMobjpool *pop, struct vector *v, PMEMoid oid);
 PMEMoid vector_get_last(PMEMobjpool *pop, struct vector *v);
+PMEMoid vector_get_first(PMEMobjpool *pop, struct vector *v);
 void vector_new_constructor(PMEMobjpool *pop, void *ptr, void *arg);
 void vector_init(PMEMobjpool *pop, struct vector *v);
