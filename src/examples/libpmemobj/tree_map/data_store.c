@@ -107,7 +107,7 @@ int main(int argc, const char *argv[]) {
 
 	if (access(path, F_OK) != 0) {
 		if ((pop = pmemobj_create(path, POBJ_LAYOUT_NAME(data_store),
-			50*PMEMOBJ_MIN_POOL, 0666)) == NULL) {
+			100*PMEMOBJ_MIN_POOL, 0666)) == NULL) {
 			perror("failed to create pool\n");
 			return 1;
 		}
@@ -123,16 +123,25 @@ int main(int argc, const char *argv[]) {
 	if (!TOID_IS_NULL(D_RO(root)->map)) /* delete the map if it exists */
 		tree_map_delete(pop, &D_RW(root)->map);
 
+	struct timespec tstart={0,0}, tend={0,0};
+	clock_gettime(CLOCK_MONOTONIC, &tstart);
+
 	/* insert random items in a transaction */
-	TX_BEGIN(pop) {
+//	TX_BEGIN(pop) {
 		tree_map_new(pop, &D_RW(root)->map);
 
 		for (int i = 1; i < MAX_INSERTS; ++i) {
 			/* new_store_item is transactional! */
 			tree_map_insert(pop, D_RO(root)->map, i,
-				new_store_item().oid);
+				OID_NULL);
 		}
-	} TX_END
+//	} TX_END
+
+	clock_gettime(CLOCK_MONOTONIC, &tend);
+	printf("insert %.5fs\n",
+		((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) -
+		((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
+
 //#if 0
 	/* count the items */
 	tree_map_foreach(D_RO(root)->map, get_keys, NULL);
@@ -142,8 +151,8 @@ int main(int argc, const char *argv[]) {
 	for (int i = 0; i < nkeys; ++i) {
 		PMEMoid item = tree_map_remove(pop, D_RO(root)->map, keys[i]);
 
-		assert(!OID_IS_NULL(item));
-		assert(OID_INSTANCEOF(item, struct store_item));
+		//assert(!OID_IS_NULL(item));
+		//assert(OID_INSTANCEOF(item, struct store_item));
 	}
 
 

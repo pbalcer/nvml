@@ -168,6 +168,8 @@ util_map_part(struct pool_set_part *part, void *addr, size_t size,
 		return -1;
 	}
 
+	memset(addr, 0, part->size);
+
 	VALGRIND_REGISTER_PMEM_MAPPING(part->addr, part->size);
 	VALGRIND_REGISTER_PMEM_FILE(part->fd, part->addr, part->size, offset);
 

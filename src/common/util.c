@@ -231,6 +231,8 @@ util_map(int fd, size_t len, int cow)
 		return NULL;
 	}
 
+	memset(base, 0, len);
+
 	LOG(3, "mapped at %p", base);
 
 	return base;
