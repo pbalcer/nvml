@@ -33,7 +33,7 @@
 #
 # examples/libpmemobj/Makefile -- build the libpmemobj examples
 #
-PROGS = manpage btree pi
+PROGS = manpage btree pi bench
 DIRS = pminvaders pmemlog pmemblk string_store string_store_tx\
 	string_store_tx_type hashset tree_map pmemobjfs
 
@@ -44,3 +44,5 @@ include ../Makefile.inc
 manpage: manpage.o
 btree: btree.o
 pi: pi.o
+bench: bench.o
+
