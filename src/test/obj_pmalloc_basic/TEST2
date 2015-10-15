@@ -1,3 +1,4 @@
+#!/bin/bash -e
 #
 # Copyright (c) 2015, Intel Corporation
 #
@@ -31,19 +32,16 @@
 #
 
 #
-# src/test/obj_bucket/Makefile -- build bucket unit test
+# src/test/obj_pmalloc_basic/TEST2 -- unit test for pmalloc interface
 #
-vpath %.c ../../libpmemobj
-vpath %.c ../../common
+export UNITTEST_NAME=obj_pmalloc_basic/TEST2
+export UNITTEST_NUM=2
 
-TARGET = obj_bucket
-OBJS = obj_bucket.o ctree.o bucket.o util.o out.o heap.o lane.o cuckoo.o
+# standard unit test setup
+. ../unittest/unittest.sh
 
-LIBPMEM=y
+setup
 
-out.o: CFLAGS += -DSRCVERSION=\"utversion\"
+expect_normal_exit ./obj_pmalloc_basic$EXESUFFIX 316
 
-include ../Makefile.inc
-
-LDFLAGS += $(call extract_funcs, obj_bucket.c)
-INCS += -I../../libpmemobj/ -I../../common/
+pass

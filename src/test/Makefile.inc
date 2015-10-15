@@ -95,7 +95,7 @@ INCS = -I../unittest -I../../include
 CFLAGS  = -std=gnu99
 CFLAGS += -ggdb
 CFLAGS += -Wall
-CFLAGS += -Werror
+#CFLAGS += -Werror
 CFLAGS += -Wmissing-prototypes
 CFLAGS += -Wpointer-arith
 CFLAGS += -Wunused-macros

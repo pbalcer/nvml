@@ -31,27 +31,51 @@
  */
 
 /*
- * pmalloc.h -- internal definitions for persistent malloc
+ * obj_pmalloc_mt.c -- multithreaded test of allocator
  */
+#include <stdint.h>
 
-int heap_boot(PMEMobjpool *pop);
-int heap_init(PMEMobjpool *pop);
-void heap_vg_open(PMEMobjpool *pop);
-int heap_cleanup(PMEMobjpool *pop);
-int heap_check(PMEMobjpool *pop);
-int heap_register_alloc_class(PMEMobjpool *pop, size_t size);
+#include "libpmemobj.h"
+#include "pmalloc.h"
+#include "unittest.h"
 
-int pmalloc(PMEMobjpool *pop, uint64_t *off, size_t size, uint64_t data_off);
-int pmalloc_construct(PMEMobjpool *pop, uint64_t *off, size_t size,
-	void (*constructor)(PMEMobjpool *pop, void *ptr, void *arg), void *arg,
-	uint64_t data_off);
+#define	ALLOC_SIZE 350
+#define	ALLOC_HEADER 64
 
-int prealloc(PMEMobjpool *pop, uint64_t *off, size_t size, uint64_t data_off);
-int prealloc_construct(PMEMobjpool *pop, uint64_t *off, size_t size,
-	void (*constructor)(PMEMobjpool *pop, void *ptr, void *arg), void *arg,
-	uint64_t data_off);
+int
+main(int argc, char *argv[])
+{
+	START(argc, argv, "obj_pmalloc_mt");
 
-void *pmalloc_header(PMEMobjpool *pop, uint64_t off);
+	if (argc < 2)
+		FATAL("usage: %s [file]", argv[0]);
 
-size_t pmalloc_usable_size(PMEMobjpool *pop, uint64_t off);
-int pfree(PMEMobjpool *pop, uint64_t *off, uint64_t data_off);
+
+	PMEMobjpool *pop = pmemobj_create(argv[1], "TEST",
+		PMEMOBJ_MIN_POOL, 0666);
+
+	if (pop == NULL)
+		FATAL("!pmemobj_create");
+
+	heap_register_alloc_class(pop, ALLOC_SIZE + ALLOC_HEADER);
+
+	PMEMoid oid;
+	pmemobj_alloc(pop, &oid, ALLOC_SIZE, 0, NULL, NULL);
+	ASSERT(!OID_IS_NULL(oid));
+
+	pmemobj_close(pop);
+
+	pop = pmemobj_open(argv[1], "TEST");
+	ASSERTne(pop, NULL);
+
+	ASSERT(OID_EQUALS(oid, pmemobj_first(pop, 0)));
+
+	PMEMoid oid_copy = oid;
+
+	pmemobj_free(&oid);
+	pmemobj_alloc(pop, &oid, ALLOC_SIZE, 0, NULL, NULL);
+
+	ASSERT(OID_EQUALS(oid, oid_copy));
+
+	DONE(NULL);
+}

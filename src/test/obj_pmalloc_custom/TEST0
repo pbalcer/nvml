@@ -1,3 +1,4 @@
+#!/bin/bash -e
 #
 # Copyright (c) 2015, Intel Corporation
 #
@@ -31,19 +32,20 @@
 #
 
 #
-# src/test/obj_bucket/Makefile -- build bucket unit test
+# src/test/obj_pmalloc_custom/TEST0 -- custom allocation classes test
 #
-vpath %.c ../../libpmemobj
-vpath %.c ../../common
+export UNITTEST_NAME=obj_pmalloc_custom/TEST0
+export UNITTEST_NUM=0
 
-TARGET = obj_bucket
-OBJS = obj_bucket.o ctree.o bucket.o util.o out.o heap.o lane.o cuckoo.o
+# standard unit test setup
+. ../unittest/unittest.sh
 
-LIBPMEM=y
+setup
 
-out.o: CFLAGS += -DSRCVERSION=\"utversion\"
+rm -f $DIR/testfile
 
-include ../Makefile.inc
+expect_normal_exit ./obj_pmalloc_custom$EXESUFFIX $DIR/testfile
 
-LDFLAGS += $(call extract_funcs, obj_bucket.c)
-INCS += -I../../libpmemobj/ -I../../common/
+rm -f $DIR/testfile
+
+pass

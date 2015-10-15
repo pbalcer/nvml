@@ -99,19 +99,19 @@ test_new_delete_bucket()
 	struct bucket *b = NULL;
 
 	/* b malloc fail */
-	b = bucket_new(1, 1);
+	b = bucket_new(BUCKET_HUGE, CONTAINER_CTREE, 1, 1);
 	ASSERT(b == NULL);
 
 	/* b->ctree fail */
-	b = bucket_new(1, 1);
+	b = bucket_new(BUCKET_HUGE, CONTAINER_CTREE, 1, 1);
 	ASSERT(b == NULL);
 
 	/* b->lock init fail */
-	b = bucket_new(1, 1);
+	b = bucket_new(BUCKET_HUGE, CONTAINER_CTREE, 1, 1);
 	ASSERT(b == NULL);
 
 	/* all ok */
-	b = bucket_new(1, 1);
+	b = bucket_new(BUCKET_HUGE, CONTAINER_CTREE, 1, 1);
 	ASSERT(b != NULL);
 
 	bucket_delete(b);
@@ -120,31 +120,31 @@ test_new_delete_bucket()
 static void
 test_bucket()
 {
-	struct bucket *b = bucket_new(TEST_UNIT_SIZE, TEST_MAX_UNIT);
+	struct bucket *b = bucket_new(BUCKET_HUGE, CONTAINER_CTREE,
+		TEST_UNIT_SIZE, TEST_MAX_UNIT);
 	ASSERT(b != NULL);
 
-	ASSERT(bucket_unit_size(b) == TEST_UNIT_SIZE);
-	ASSERT(bucket_is_small(b));
-	ASSERT(bucket_calc_units(b, TEST_SIZE) == TEST_SIZE);
-	ASSERT(bucket_lock(b) == 0);
-	bucket_unlock(b);
+	ASSERT(b->unit_size == TEST_UNIT_SIZE);
+	ASSERT(b->type == BUCKET_HUGE);
+	ASSERT(b->calc_units(b, TEST_SIZE) == TEST_SIZE);
 }
 
 static void
 test_bucket_insert_get()
 {
-	struct bucket *b = bucket_new(TEST_UNIT_SIZE, TEST_MAX_UNIT);
+	struct bucket *b = bucket_new(BUCKET_RUN, CONTAINER_CTREE,
+		TEST_UNIT_SIZE, TEST_MAX_UNIT);
 	ASSERT(b != NULL);
 
 	struct memory_block m = {TEST_CHUNK_ID, TEST_ZONE_ID,
 		TEST_SIZE_IDX, TEST_BLOCK_OFF};
 
 	/* get from empty */
-	ASSERT(bucket_get_rm_block_bestfit(b, &m) != 0);
+	ASSERT(CNT_OP(b, get_rm_bestfit, &m) != 0);
 
-	ASSERT(bucket_insert_block(NULL, b, m) == 0);
+	ASSERT(CNT_OP(b, insert, NULL, m) == 0);
 
-	ASSERT(bucket_get_rm_block_bestfit(b, &m) == 0);
+	ASSERT(CNT_OP(b, get_rm_bestfit, &m) == 0);
 
 	ASSERT(m.chunk_id == TEST_CHUNK_ID);
 	ASSERT(m.zone_id == TEST_ZONE_ID);
@@ -157,15 +157,16 @@ test_bucket_insert_get()
 static void
 test_bucket_remove()
 {
-	struct bucket *b = bucket_new(TEST_UNIT_SIZE, TEST_MAX_UNIT);
+	struct bucket *b = bucket_new(BUCKET_RUN, CONTAINER_CTREE,
+		TEST_UNIT_SIZE, TEST_MAX_UNIT);
 	ASSERT(b != NULL);
 
 	struct memory_block m = {TEST_CHUNK_ID, TEST_ZONE_ID,
 		TEST_SIZE_IDX, TEST_BLOCK_OFF};
 
-	ASSERT(bucket_insert_block(NULL, b, m) == 0);
+	ASSERT(CNT_OP(b, insert, NULL, m) == 0);
 
-	ASSERT(bucket_get_rm_block_exact(b, m) == 0);
+	ASSERT(CNT_OP(b, get_rm_exact, m) == 0);
 
 	bucket_delete(b);
 }

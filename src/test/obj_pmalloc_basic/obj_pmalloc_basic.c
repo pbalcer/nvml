@@ -59,7 +59,7 @@
 
 struct mock_pop {
 	PMEMobjpool p;
-	char lanes[LANE_SECTION_LEN];
+	char lanes[LANE_SECTION_LEN * 3];
 	uint64_t ptr;
 };
 
@@ -152,7 +152,7 @@ test_realloc(size_t org, size_t dest)
 }
 
 static void
-test_mock_pool_allocs()
+test_mock_pool_allocs(size_t custom_class)
 {
 	addr = MALLOC(MOCK_POOL_SIZE);
 	mock_pop = &addr->p;
@@ -180,6 +180,10 @@ test_mock_pool_allocs()
 
 	lane_boot(mock_pop);
 
+	if (custom_class != 0) {
+		heap_register_alloc_class(mock_pop, custom_class);
+	}
+
 	ASSERTne(mock_pop->heap, NULL);
 
 	test_malloc_free_loop(MALLOC_FREE_SIZE);
@@ -194,8 +198,11 @@ test_mock_pool_allocs()
 	test_oom_allocs(TEST_SMALL_ALLOC_SIZE);
 	test_oom_allocs(TEST_MEGA_ALLOC_SIZE);
 
-	test_realloc(TEST_SMALL_ALLOC_SIZE, TEST_MEDIUM_ALLOC_SIZE);
-	test_realloc(TEST_HUGE_ALLOC_SIZE, TEST_MEGA_ALLOC_SIZE);
+	/* custom allocation classes do not support reallcations */
+	if (custom_class == 0) {
+		test_realloc(TEST_SMALL_ALLOC_SIZE, TEST_MEDIUM_ALLOC_SIZE);
+		test_realloc(TEST_HUGE_ALLOC_SIZE, TEST_MEGA_ALLOC_SIZE);
+	}
 
 	lane_cleanup(mock_pop);
 	heap_cleanup(mock_pop);
@@ -219,8 +226,14 @@ main(int argc, char *argv[])
 	START(argc, argv, "obj_pmalloc_basic");
 	util_init();
 
+	size_t custom_class = 0;
+
+	if (argc == 2) {
+		custom_class = atoll(argv[1]);
+	}
+
 	for (int i = 0; i < TEST_RUNS; ++i)
-		test_mock_pool_allocs();
+		test_mock_pool_allocs(custom_class);
 
 	test_spec_compliance();
 

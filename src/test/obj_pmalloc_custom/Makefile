@@ -31,13 +31,14 @@
 #
 
 #
-# src/test/obj_bucket/Makefile -- build bucket unit test
+# src/test/obj_pmalloc_custom/Makefile -- build obj_pmalloc_custom unit test
 #
 vpath %.c ../../libpmemobj
 vpath %.c ../../common
 
-TARGET = obj_bucket
-OBJS = obj_bucket.o ctree.o bucket.o util.o out.o heap.o lane.o cuckoo.o
+TARGET = obj_pmalloc_custom
+OBJS = obj_pmalloc_custom.o pmalloc.o bucket.o redo.o heap.o lane.o ctree.o\
+    util.o set.o out.o obj.o cuckoo.o list.o sync.o tx.o libpmemobj.o
 
 LIBPMEM=y
 
@@ -45,5 +46,4 @@ out.o: CFLAGS += -DSRCVERSION=\"utversion\"
 
 include ../Makefile.inc
 
-LDFLAGS += $(call extract_funcs, obj_bucket.c)
 INCS += -I../../libpmemobj/ -I../../common/

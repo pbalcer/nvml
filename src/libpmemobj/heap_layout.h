@@ -48,10 +48,13 @@
 #define	HEAP_MIN_SIZE (sizeof (struct heap_layout) + ZONE_MIN_SIZE)
 #define	REDO_LOG_SIZE 4
 #define	BITS_PER_VALUE 64
-#define	MAX_BITMAP_VALUES 39 /* five cachelines - 8 bytes */
+#define	MAX_CACHELINE_ALIGNMENT 40 /* run alignment, 5 cachelines */
+#define RUN_METASIZE (MAX_CACHELINE_ALIGNMENT * 8)
+#define	MAX_BITMAP_VALUES (MAX_CACHELINE_ALIGNMENT - 2)
 #define	RUN_BITMAP_SIZE (BITS_PER_VALUE * MAX_BITMAP_VALUES)
-#define	RUNSIZE (CHUNKSIZE - ((MAX_BITMAP_VALUES + 1) * 8))
+#define	RUNSIZE (CHUNKSIZE - RUN_METASIZE)
 #define	MIN_RUN_SIZE 128
+#define MBLOCK_HEADER_SIZE 64
 
 enum chunk_flags {
 	CHUNK_FLAG_ZEROED	=	0x0001,
@@ -73,6 +76,7 @@ struct chunk {
 
 struct chunk_run {
 	uint64_t block_size;
+	uint64_t bucket_vptr; /* runtime information */
 	uint64_t bitmap[MAX_BITMAP_VALUES];
 	uint8_t data[RUNSIZE];
 };
@@ -89,9 +93,14 @@ struct zone_header {
 	uint8_t reserved[56];
 };
 
+struct mblock_header {
+	uint8_t data[MBLOCK_HEADER_SIZE];
+};
+
 struct zone {
 	struct zone_header header;
 	struct chunk_header chunk_headers[MAX_CHUNK];
+	struct mblock_header mblock_headers[MAX_CHUNK];
 	struct chunk chunks[MAX_CHUNK];
 };
 

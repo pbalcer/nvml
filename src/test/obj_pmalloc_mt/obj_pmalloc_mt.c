@@ -111,8 +111,14 @@ main(int argc, char *argv[])
 {
 	START(argc, argv, "obj_pmalloc_mt");
 
-	if (argc != 2)
+	if (argc < 2)
 		FATAL("usage: %s [file]", argv[0]);
+
+	size_t custom_class = 0;
+
+	if (argc == 3) {
+		custom_class = atoll(argv[1]);
+	}
 
 	PMEMobjpool *pop = pmemobj_create(argv[1], "TEST",
 		THREADS * OPS_PER_THREAD * ALLOC_SIZE * FRAGMENTATION, 0666);
@@ -132,9 +138,17 @@ main(int argc, char *argv[])
 		args[i].idx = i;
 	}
 
+	if (custom_class != 0)
+		heap_register_alloc_class(pop, custom_class);
+
 	run_worker(alloc_worker, args);
-	run_worker(realloc_worker, args);
+
+	if (custom_class == 0) /* not supported by custom alloc classes */
+		run_worker(realloc_worker, args);
+
 	run_worker(free_worker, args);
+
+	pmemobj_close(pop);
 
 	DONE(NULL);
 }

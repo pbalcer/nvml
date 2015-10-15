@@ -61,16 +61,7 @@ struct cuckoo {
 static const struct cuckoo_slot null_slot = {0, NULL};
 
 /*
- * hash_mod -- (internal) first hash function
- */
-static int
-hash_mod(struct cuckoo *c, uint64_t key)
-{
-	return key % c->size;
-}
-
-/*
- * hash_mixer -- (internal) second hash function
+ * hash_mixer -- (internal) first hash function
  *
  * Based on Austin Appleby MurmurHash3 64-bit finalizer.
  */
@@ -85,10 +76,33 @@ hash_mixer(struct cuckoo *c, uint64_t key)
 	return key % c->size;
 }
 
+/*
+ * hash_mod -- (internal) second hash function
+ * From W. Press et al., Numerical Recipes: The Art of Scientific Computing
+ * Cambridge University Press, 2007
+ */
+static int
+hash_mod(struct cuckoo *c, uint64_t key)
+{
+	uint64_t v = key * 3935559000370003845 + 2691343689449507681;
+
+	v ^= v >> 21;
+	v ^= v << 37;
+	v ^= v >>  4;
+
+	v *= 4768777513237032717;
+
+	v ^= v << 20;
+	v ^= v >> 41;
+	v ^= v <<  5;
+
+	return v % c->size;
+}
+
 static int
 (*hash_funcs[MAX_HASH_FUNCS])(struct cuckoo *c, uint64_t key) = {
-	hash_mod,
-	hash_mixer
+	hash_mixer,
+	hash_mod
 };
 
 /*
