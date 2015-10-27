@@ -34,7 +34,7 @@
  * bucket.h -- internal definitions for bucket
  */
 
-#define RUN_NALLOCS(_bs)\
+#define	RUN_NALLOCS(_bs)\
 ((RUNSIZE / ((_bs) + MBLOCK_HEADER_SIZE)))
 
 enum block_container_type {
@@ -47,7 +47,7 @@ enum block_container_type {
 
 struct block_container {
 	enum block_container_type type;
-	size_t unit_size;
+	size_t unit_size; /* required only for valgrind... */
 };
 
 struct block_container_ops {
@@ -91,9 +91,24 @@ struct bucket_huge {
 struct bucket_run {
 	struct bucket super;
 
+	/*
+	 * Last value of a bitmap representing completely free run from this
+	 * bucket.
+	 */
 	uint64_t bitmap_lastval;
+	/*
+	 * Number of 8 byte values this run bitmap is composed of.
+	 */
 	int bitmap_nval;
+
+	/*
+	 * Number of allocations that can be performed from a single run.
+	 */
 	int bitmap_nallocs;
+
+	/*
+	 * Maximum multiplication factor of unit_size for allocations.
+	 */
 	int unit_max;
 };
 

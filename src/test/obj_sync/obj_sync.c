@@ -41,6 +41,7 @@
 #include "lane.h"
 #include "redo.h"
 #include "list.h"
+#include "pmalloc.h"
 #include "obj.h"
 
 #define	DATA_SIZE 128

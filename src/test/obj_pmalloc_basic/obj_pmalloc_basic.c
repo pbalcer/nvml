@@ -110,7 +110,7 @@ test_oom_allocs(size_t size)
 
 	size_t count = 0;
 	for (;;) {
-		if (pmalloc(mock_pop, &addr->ptr, size, 0)) {
+		if (pmalloc(mock_pop, &addr->ptr, size)) {
 			break;
 		}
 		ASSERT(addr->ptr != 0);
@@ -119,7 +119,7 @@ test_oom_allocs(size_t size)
 
 	for (int i = 0; i < count; ++i) {
 		addr->ptr = allocs[i];
-		pfree(mock_pop, &addr->ptr, 0);
+		pfree(mock_pop, &addr->ptr);
 		ASSERT(addr->ptr == 0);
 	}
 	ASSERT(count != 0);
@@ -131,9 +131,9 @@ test_malloc_free_loop(size_t size)
 {
 	int err;
 	for (int i = 0; i < MAX_MALLOC_FREE_LOOP; ++i) {
-		err = pmalloc(mock_pop, &addr->ptr, size, 0);
+		err = pmalloc(mock_pop, &addr->ptr, size);
 		ASSERTeq(err, 0);
-		pfree(mock_pop, &addr->ptr, 0);
+		pfree(mock_pop, &addr->ptr);
 	}
 }
 
@@ -141,13 +141,13 @@ static void
 test_realloc(size_t org, size_t dest)
 {
 	int err;
-	err = pmalloc(mock_pop, &addr->ptr, org, 0);
+	err = pmalloc(mock_pop, &addr->ptr, org);
 	ASSERTeq(err, 0);
 	ASSERT(pmalloc_usable_size(mock_pop, addr->ptr) >= org);
-	err = prealloc(mock_pop, &addr->ptr, dest, 0);
+	err = prealloc(mock_pop, &addr->ptr, dest);
 	ASSERTeq(err, 0);
 	ASSERT(pmalloc_usable_size(mock_pop, addr->ptr) >= dest);
-	err = pfree(mock_pop, &addr->ptr, 0);
+	err = pfree(mock_pop, &addr->ptr);
 	ASSERTeq(err, 0);
 }
 

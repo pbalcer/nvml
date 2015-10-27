@@ -1,14 +1,14 @@
 obj_basic_integration/TEST4: START: obj_basic_integration
  ./obj_basic_integration$(nW) $(nW)/testset1
-alloc: 128, size: 192
-realloc: 128 => 655360, size: 786368
-realloc: 655360 => 1, size: 786368
+alloc: 128, size: 128
+realloc: 128 => 655360, size: 786432
+realloc: 655360 => 1, size: 786432
 free
-realloc: 0 => 777, size: 960
-realloc: 777 => 1, size: 960
+realloc: 0 => 777, size: 1024
+realloc: 777 => 1, size: 1024
 free
-realloc: 0 => 1, size: 64
-realloc: 1 => 1, size: 64
+realloc: 0 => 1, size: 128
+realloc: 1 => 1, size: 128
 free
 POBJ_LIST_FOREACH: dummy_node 0
 POBJ_LIST_FOREACH: dummy_node 5

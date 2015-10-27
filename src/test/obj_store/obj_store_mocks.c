@@ -41,8 +41,8 @@
 #include "lane.h"
 #include "redo.h"
 #include "list.h"
-#include "obj.h"
 #include "pmalloc.h"
+#include "obj.h"
 #include "heap_layout.h"
 
 struct heap_header_mock {
@@ -92,8 +92,7 @@ FUNC_MOCK_END
  *
  * Allocates the memory using linear allocator.
  */
-FUNC_MOCK(pmalloc, int, PMEMobjpool *pop, uint64_t *off, size_t size,
-		uint64_t data_off)
+FUNC_MOCK(pmalloc, int, PMEMobjpool *pop, uint64_t *off, size_t size)
 FUNC_MOCK_RUN_DEFAULT {
 	struct heap_header_mock *hheader = (struct heap_header_mock *)pop->heap;
 	PMEMobjpool *pop = (PMEMobjpool *)hheader->pop;
@@ -103,10 +102,13 @@ FUNC_MOCK_RUN_DEFAULT {
 		alloc->size = size;
 		alloc->chunk_id = alloc->zone_id = 0;
 		pop->persist(pop, alloc, sizeof (*alloc));
-		*off = hheader->offset + sizeof (*alloc);
+		*off = hheader->offset + sizeof (*alloc) +
+			sizeof (struct oob_header);
 		pop->persist(pop, off, sizeof (uint64_t));
-		hheader->offset += size + sizeof (*alloc);
-		hheader->size -= size + sizeof (*alloc);
+		uint64_t rsize = size + sizeof (*alloc) +
+			sizeof (struct oob_header);
+		hheader->offset += rsize;
+		hheader->size -= rsize;
 		pop->persist(pop, hheader, sizeof (*hheader));
 		return 0;
 	} else
@@ -119,24 +121,33 @@ FUNC_MOCK_END
  */
 FUNC_MOCK(pmalloc_construct, int, PMEMobjpool *pop, uint64_t *off,
 	size_t size, void (*constructor)(PMEMobjpool *pop, void *ptr,
-	void *arg), void *arg, uint64_t data_off)
+	void *arg), void *arg)
 FUNC_MOCK_RUN_DEFAULT {
 	struct heap_header_mock *hheader = (struct heap_header_mock *)pop->heap;
-	if (pmalloc(pop, off, size, data_off))
+	if (pmalloc(pop, off, size))
 		return ENOMEM;
 	else {
-		(*constructor)(pop, (void *)(hheader->pop + *off + data_off),
-			arg);
+		(*constructor)(pop, (void *)(hheader->pop + *off), arg);
 		return 0;
 	}
 }
 FUNC_MOCK_END
 
+FUNC_MOCK(pmalloc_header, void *, PMEMobjpool *pop, uint64_t off)
+	FUNC_MOCK_RUN_DEFAULT {
+		struct heap_header_mock *hheader =
+			(struct heap_header_mock *)pop->heap;
+		struct allocation_header *alloc =
+				(void *)(hheader->pop + off -
+				sizeof (struct oob_header));
+		return alloc;
+	}
+FUNC_MOCK_END
+
 /*
  * prealloc -- prealloc mock
  */
-FUNC_MOCK(prealloc, int, PMEMobjpool *pop, uint64_t *off, size_t size,
-		uint64_t data_off)
+FUNC_MOCK(prealloc, int, PMEMobjpool *pop, uint64_t *off, size_t size)
 FUNC_MOCK_RUN_DEFAULT {
 	return ENOSYS;
 }
@@ -147,14 +158,13 @@ FUNC_MOCK_END
  */
 FUNC_MOCK(prealloc_construct, int, PMEMobjpool *pop, uint64_t *off,
 	size_t size, void (*constructor)(PMEMobjpool *pop, void *ptr,
-	void *arg), void *arg, uint64_t data_off)
+	void *arg), void *arg)
 FUNC_MOCK_RUN_DEFAULT {
 	struct heap_header_mock *hheader = (struct heap_header_mock *)pop->heap;
-	if (prealloc(pop, off, size, data_off))
+	if (prealloc(pop, off, size))
 		return ENOMEM;
 	else {
-		(*constructor)(pop, (void *)(hheader->pop + *off + data_off),
-			arg);
+		(*constructor)(pop, (void *)(hheader->pop + *off), arg);
 		return 0;
 	}
 }
@@ -167,7 +177,8 @@ FUNC_MOCK(pmalloc_usable_size, size_t, PMEMobjpool *pop, uint64_t off)
 FUNC_MOCK_RUN_DEFAULT {
 	struct heap_header_mock *hheader = (struct heap_header_mock *)pop->heap;
 	struct allocation_header *alloc =
-			(void *)(hheader->pop + off - sizeof (*alloc));
+			(void *)(hheader->pop + off - sizeof (*alloc) -
+			sizeof (struct oob_header));
 	return alloc->size;
 }
 FUNC_MOCK_END
@@ -175,7 +186,7 @@ FUNC_MOCK_END
 /*
  * pfree -- pfree mock
  */
-FUNC_MOCK(pfree, int, PMEMobjpool *pop, uint64_t *off, uint64_t data_off)
+FUNC_MOCK(pfree, int, PMEMobjpool *pop, uint64_t *off)
 FUNC_MOCK_RUN_DEFAULT {
 	struct heap_header_mock *hheader = (struct heap_header_mock *)pop->heap;
 	PMEMobjpool *pop = (PMEMobjpool *)hheader->pop;

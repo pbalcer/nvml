@@ -527,8 +527,8 @@ main(int argc, char *argv[])
 			0, S_IWUSR | S_IRUSR)) == NULL)
 		FATAL("!pmemobj_create: %s", path);
 
-	test_alloc_api(pop);
 	test_realloc_api(pop);
+	test_alloc_api(pop);
 	test_list_api(pop);
 	test_tx_api(pop);
 

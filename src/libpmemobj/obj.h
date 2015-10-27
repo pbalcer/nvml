@@ -91,13 +91,10 @@
 	})
 
 #define	OOB_HEADER_FROM_OID(pop, oid)\
-	((struct oob_header *)((uintptr_t)(pop) + (oid).off - OBJ_OOB_SIZE))
+	((struct oob_header *)pmalloc_header((pop), (oid).off))
 
-#define	OOB_HEADER_FROM_PTR(ptr)\
-	((struct oob_header *)((uintptr_t)(ptr) - OBJ_OOB_SIZE))
-
-#define	OOB_OFFSET_OF(oid, field)\
-	((oid).off - OBJ_OOB_SIZE + offsetof(struct oob_header, field))
+#define	OOB_HEADER_FROM_PTR(pop, ptr)\
+	((struct oob_header *)pmalloc_header((pop), OBJ_PTR_TO_OFF(pop, ptr)))
 
 #define	OBJ_STORE_ITEM_PADDING\
 	(_POBJ_CL_ALIGNMENT - (sizeof (struct list_head) % _POBJ_CL_ALIGNMENT))

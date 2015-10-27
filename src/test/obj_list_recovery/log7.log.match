@@ -83,6 +83,7 @@ oob list sec:
 id = 10
 oob list sec reverse:
 id = 10
+prealloc(id = 1, size = 2) = true
 oob list:
 id = 1
 id = 2
@@ -188,7 +189,7 @@ id = 12
 oob list sec reverse:
 id = 12
 id = 10
-pfree(id = 13)
+pfree(id = 2)
 oob list:
 id = 2
 id = 3

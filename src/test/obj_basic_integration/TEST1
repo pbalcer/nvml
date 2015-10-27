@@ -41,7 +41,7 @@ require_valgrind_pmemcheck
 
 setup
 
-create_holey_file 8 $DIR/testfile1
+create_holey_file 16 $DIR/testfile1
 
 expect_normal_exit\
     valgrind --tool=pmemcheck\

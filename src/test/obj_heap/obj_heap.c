@@ -42,8 +42,8 @@
 #include "bucket.h"
 #include "lane.h"
 #include "list.h"
-#include "obj.h"
 #include "pmalloc.h"
+#include "obj.h"
 #include "unittest.h"
 
 #define	MOCK_POOL_SIZE PMEMOBJ_MIN_POOL

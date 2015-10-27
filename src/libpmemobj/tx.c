@@ -44,10 +44,11 @@
 #include "lane.h"
 #include "redo.h"
 #include "list.h"
+#include "pmalloc.h"
 #include "obj.h"
 #include "out.h"
-#include "pmalloc.h"
 #include "ctree.h"
+#include "heap_layout.h"
 #include "valgrind_internal.h"
 
 struct tx_data {
@@ -109,7 +110,7 @@ constructor_tx_alloc(PMEMobjpool *pop, void *ptr, void *arg)
 
 	struct tx_alloc_args *args = arg;
 
-	struct oob_header *oobh = OOB_HEADER_FROM_PTR(ptr);
+	struct oob_header *oobh = OOB_HEADER_FROM_PTR(pop, ptr);
 
 	/* temporarily add the OOB header */
 	VALGRIND_ADD_TO_TX(oobh, OBJ_OOB_SIZE);
@@ -143,7 +144,7 @@ constructor_tx_zalloc(PMEMobjpool *pop, void *ptr, void *arg)
 
 	struct tx_alloc_args *args = arg;
 
-	struct oob_header *oobh = OOB_HEADER_FROM_PTR(ptr);
+	struct oob_header *oobh = OOB_HEADER_FROM_PTR(pop, ptr);
 
 	/* temporarily add the OOB header */
 	VALGRIND_ADD_TO_TX(oobh, OBJ_OOB_SIZE);
@@ -181,9 +182,7 @@ constructor_tx_add_range(PMEMobjpool *pop, void *ptr, void *arg)
 	struct tx_range *range = ptr;
 
 	/* temporarily add the object copy to the transaction */
-	VALGRIND_ADD_TO_TX(OOB_HEADER_FROM_PTR(ptr),
-				sizeof (struct tx_range) + args->size
-				+ OBJ_OOB_SIZE);
+	VALGRIND_ADD_TO_TX(ptr, sizeof (struct tx_range) + args->size);
 
 	range->offset = args->offset;
 	range->size = args->size;
@@ -195,9 +194,7 @@ constructor_tx_add_range(PMEMobjpool *pop, void *ptr, void *arg)
 	/* memcpy data and persist */
 	pop->memcpy_persist(pop, range->data, src, args->size);
 
-	VALGRIND_REMOVE_FROM_TX(OOB_HEADER_FROM_PTR(ptr),
-				sizeof (struct tx_range) + args->size
-				+ OBJ_OOB_SIZE);
+	VALGRIND_REMOVE_FROM_TX(ptr, sizeof (struct tx_range) + args->size);
 
 	/* do not report changes to the original object */
 	VALGRIND_ADD_TO_TX(src, args->size);
@@ -215,7 +212,7 @@ constructor_tx_copy(PMEMobjpool *pop, void *ptr, void *arg)
 	ASSERTne(arg, NULL);
 
 	struct tx_alloc_copy_args *args = arg;
-	struct oob_header *oobh = OOB_HEADER_FROM_PTR(ptr);
+	struct oob_header *oobh = OOB_HEADER_FROM_PTR(pop, ptr);
 
 	/* temporarily add the OOB header */
 	VALGRIND_ADD_TO_TX(oobh, OBJ_OOB_SIZE);
@@ -251,7 +248,7 @@ constructor_tx_copy_zero(PMEMobjpool *pop, void *ptr, void *arg)
 	ASSERTne(arg, NULL);
 
 	struct tx_alloc_copy_args *args = arg;
-	struct oob_header *oobh = OOB_HEADER_FROM_PTR(ptr);
+	struct oob_header *oobh = OOB_HEADER_FROM_PTR(pop, ptr);
 
 	/* temporarily add the OOB header */
 	VALGRIND_ADD_TO_TX(oobh, OBJ_OOB_SIZE);
@@ -309,11 +306,11 @@ tx_clear_undo_log(PMEMobjpool *pop, struct list_head *head, int vg_clean)
 		 * modifications after abort are not reported.
 		 */
 		if (vg_clean) {
-			struct oob_header *oobh = OOB_HEADER_FROM_OID(pop, obj);
-			size_t size = pmalloc_usable_size(pop,
-				obj.off - OBJ_OOB_SIZE);
+			size_t size = pmalloc_usable_size(pop, obj.off);
 
-			VALGRIND_SET_CLEAN(oobh, size);
+			VALGRIND_SET_CLEAN(OBJ_OFF_TO_PTR(pop, obj.off), size);
+			VALGRIND_SET_CLEAN(OOB_HEADER_FROM_OID(pop, obj),
+				OBJ_OOB_SIZE);
 		}
 #endif
 
@@ -589,13 +586,15 @@ tx_pre_commit_alloc(PMEMobjpool *pop, struct lane_tx_layout *layout)
 
 		VALGRIND_REMOVE_FROM_TX(oobh, OBJ_OOB_SIZE);
 
-		size_t size = pmalloc_usable_size(pop,
-				iter.off - OBJ_OOB_SIZE);
+		size_t size = pmalloc_usable_size(pop, iter.off);
 
 		VALGRIND_DO_MAKE_MEM_DEFINED(pop, oobh->padding,
 				sizeof (oobh->padding));
+
 		/* flush and persist the whole allocated area and oob header */
-		pop->persist(pop, oobh, size);
+		pop->persist(pop, oobh, OBJ_OOB_SIZE);
+		pop->persist(pop, OBJ_OFF_TO_PTR(pop, iter.off), size);
+
 		VALGRIND_DO_MAKE_MEM_NOACCESS(pop, oobh->padding,
 				sizeof (oobh->padding));
 	}
@@ -1020,8 +1019,7 @@ tx_realloc_common(PMEMoid oid, size_t size, unsigned int type_num,
 
 	/* oid is not NULL and size is not 0 so do realloc by alloc and free */
 	void *ptr = OBJ_OFF_TO_PTR(lane->pop, oid.off);
-	size_t old_size = pmalloc_usable_size(lane->pop,
-			oid.off - OBJ_OOB_SIZE) - OBJ_OOB_SIZE;
+	size_t old_size = pmalloc_usable_size(lane->pop, oid.off);
 
 	size_t copy_size = old_size < size ? old_size : size;
 
@@ -1690,13 +1688,14 @@ pmemobj_tx_free(PMEMoid oid)
 	} else {
 		ASSERTeq(oobh->internal_type, TYPE_NONE);
 #ifdef USE_VG_PMEMCHECK
-		size_t size = pmalloc_usable_size(lane->pop,
-				oid.off - OBJ_OOB_SIZE);
+		void *ptr = OBJ_OFF_TO_PTR(lane->pop, oid.off);
+		void *hdr = OOB_HEADER_FROM_OID(lane->pop, oid);
+		size_t size = pmalloc_usable_size(lane->pop, oid.off);
 
-		VALGRIND_SET_CLEAN(oobh, size);
+		VALGRIND_SET_CLEAN(ptr, size);
+		VALGRIND_SET_CLEAN(hdr, OBJ_OOB_SIZE);
+		VALGRIND_REMOVE_FROM_TX(ptr, size);
 #endif
-		VALGRIND_REMOVE_FROM_TX(oobh, pmalloc_usable_size(lane->pop,
-				oid.off - OBJ_OOB_SIZE));
 
 		if (ctree_remove(lane->ranges, oid.off, 1) != oid.off) {
 			ERR("TX undo state mismatch");
@@ -1748,16 +1747,13 @@ tx_abort_register_valgrind(PMEMobjpool *pop, struct list_head *head)
 	PMEMoid iter = head->pe_first;
 
 	while (!OBJ_OID_IS_NULL(iter)) {
-		/*
-		 * Can't use pmemobj_direct and pmemobj_alloc_usable_size
-		 * because pool has not been registered yet.
-		 */
-		void *p = (char *)pop + iter.off;
-		size_t sz = pmalloc_usable_size(pop,
-				iter.off - OBJ_OOB_SIZE) - OBJ_OOB_SIZE;
+		void *p = OBJ_OFF_TO_PTR(pop, iter.off);
+		void *hdr = pmalloc_header(pop, iter.off);
+		size_t sz = pmalloc_usable_size(pop, iter.off);
 
 		VALGRIND_DO_MEMPOOL_ALLOC(pop, p, sz);
 		VALGRIND_DO_MAKE_MEM_DEFINED(pop, p, sz);
+		VALGRIND_DO_MAKE_MEM_DEFINED(pop, hdr, MBLOCK_HEADER_SIZE);
 
 		iter = oob_list_next(pop, head, iter);
 	}

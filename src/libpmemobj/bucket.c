@@ -52,6 +52,7 @@
 #include "ctree.h"
 #include "lane.h"
 #include "list.h"
+#include "pmalloc.h"
 #include "obj.h"
 #include "valgrind_internal.h"
 
@@ -204,8 +205,7 @@ struct block_container_ops container_ctree_ops = {
 static struct block_container *
 bucket_tree_create(size_t unit_size)
 {
-	struct block_container_ctree *bc =
-		Malloc(sizeof (struct block_container_ctree));
+	struct block_container_ctree *bc = Malloc(sizeof (*bc));
 	if (bc == NULL)
 		goto error_container_malloc;
 
@@ -426,8 +426,7 @@ struct block_container_ops container_list_ops = {
 static struct block_container *
 bucket_list_create(size_t unit_size)
 {
-	struct block_container_list *bc =
-		Malloc(sizeof (struct block_container_list));
+	struct block_container_list *bc = Malloc(sizeof (*bc));
 	if (bc == NULL)
 		goto error_container_malloc;
 
@@ -459,12 +458,16 @@ bucket_list_delete(struct block_container *bc)
 {
 	struct block_container_list *c = (struct block_container_list *)bc;
 
-	struct list_block *l = NULL;
-	while ((l = LIST_FIRST(&c->blocks)) != NULL) {
-		LIST_REMOVE(l, list);
-		Free(l);
+	struct list_block *lb = NULL;
+	while ((lb = LIST_FIRST(&c->blocks)) != NULL) {
+		LIST_REMOVE(lb, list);
+		Free(lb);
 	}
 
+	if ((errno = pthread_mutex_destroy(&c->list_lock)) != 0) {
+		ERR("!pthread_mutex_destroy");
+		ASSERT(0);
+	}
 	cuckoo_delete(c->map);
 	Free(bc);
 }
@@ -486,6 +489,8 @@ bucket_run_create(size_t unit_size, int unit_max)
 	if (b == NULL)
 		return NULL;
 
+	b->super.type = BUCKET_RUN;
+
 	b->unit_max = unit_max;
 	b->bitmap_nallocs = RUN_NALLOCS(unit_size);
 	int unused_bits = RUN_BITMAP_SIZE - b->bitmap_nallocs;
@@ -503,6 +508,10 @@ static struct bucket *
 bucket_huge_create(size_t unit_size, int unit_max)
 {
 	struct bucket_huge *b = Malloc(sizeof (*b));
+	if (b == NULL)
+		return NULL;
+
+	b->super.type = BUCKET_HUGE;
 
 	return (struct bucket *)b;
 }
@@ -545,12 +554,13 @@ bucket_new(enum bucket_type type, enum block_container_type ctype,
 	if (b == NULL)
 		goto error_bucket_malloc;
 
-	b->type = type;
 	b->calc_units = bucket_calc_units;
 
 	b->container = block_containers[ctype].create(unit_size);
 	if (b->container == NULL)
 		goto error_container_create;
+
+	b->container->unit_size = unit_size;
 
 	if ((errno = pthread_mutex_init(&b->lock, NULL)) != 0) {
 		ERR("!pthread_mutex_init");

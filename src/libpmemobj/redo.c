@@ -40,6 +40,7 @@
 #include "lane.h"
 #include "redo.h"
 #include "list.h"
+#include "pmalloc.h"
 #include "obj.h"
 #include "out.h"
 #include "valgrind_internal.h"

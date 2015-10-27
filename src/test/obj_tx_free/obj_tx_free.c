@@ -378,7 +378,7 @@ main(int argc, char *argv[])
 		FATAL("usage: %s [file]", argv[0]);
 
 	PMEMobjpool *pop;
-	if ((pop = pmemobj_create(argv[1], LAYOUT_NAME, PMEMOBJ_MIN_POOL,
+	if ((pop = pmemobj_create(argv[1], LAYOUT_NAME, PMEMOBJ_MIN_POOL * 2,
 	    S_IWUSR | S_IRUSR)) == NULL)
 		FATAL("!pmemobj_create");
 

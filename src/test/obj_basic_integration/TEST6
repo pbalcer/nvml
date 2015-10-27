@@ -44,8 +44,8 @@ export PMEMOBJ_VG_CHECK_UNDEF=1
 
 setup
 
-create_poolset $DIR/testset1 8M:$DIR/testfile1:x 8M:$DIR/testfile2:x \
-	r 16M:$DIR/testfile3:x
+create_poolset $DIR/testset1 16M:$DIR/testfile1:x 16M:$DIR/testfile2:x \
+	r 32M:$DIR/testfile3:x
 
 expect_normal_exit\
     ./obj_basic_integration$EXESUFFIX $DIR/testset1

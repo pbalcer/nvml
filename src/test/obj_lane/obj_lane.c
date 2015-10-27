@@ -47,6 +47,7 @@
 #include "redo.h"
 #include "heap_layout.h"
 #include "list.h"
+#include "pmalloc.h"
 #include "obj.h"
 
 #define	MAX_MOCK_LANES 5

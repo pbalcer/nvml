@@ -116,7 +116,7 @@ id = 12
 list reverse:
 id = 12
 id = 1
-pfree(id = 13)
+pfree(id = 12)
 oob list:
 id = 12
 id = 1

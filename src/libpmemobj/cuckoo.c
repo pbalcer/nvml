@@ -78,6 +78,7 @@ hash_mixer(struct cuckoo *c, uint64_t key)
 
 /*
  * hash_mod -- (internal) second hash function
+ *
  * From W. Press et al., Numerical Recipes: The Art of Scientific Computing
  * Cambridge University Press, 2007
  */

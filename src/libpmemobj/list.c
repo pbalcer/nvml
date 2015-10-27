@@ -49,7 +49,7 @@
 #define	NEXT_OFF (offsetof(struct list_entry, pe_next) + offsetof(PMEMoid, off))
 #define	OOB_ENTRY_OFF (offsetof(struct oob_header, oob))
 #define	OOB_ENTRY_OFF_REV \
-((ssize_t)offsetof(struct oob_header, oob) - OBJ_OOB_SIZE)
+((ssize_t)UINT64_MAX)
 
 /*
  * list_args_common -- common arguments for operations on list
@@ -255,11 +255,24 @@ list_replace_item(PMEMobjpool *pop,
 	*next_offset = args->entry_ptr->pe_next.off;
 	*prev_offset = args->entry_ptr->pe_prev.off;
 
+	uint64_t prev_next_off;
+	uint64_t next_prev_off;
+
 	/* modify prev->next and next->prev offsets */
-	uint64_t prev_next_off = args->entry_ptr->pe_prev.off +
-		args_common->pe_offset + NEXT_OFF;
-	uint64_t next_prev_off = args->entry_ptr->pe_next.off +
-		args_common->pe_offset + PREV_OFF;
+	if (args_common->pe_offset == OOB_ENTRY_OFF_REV) {
+		next_prev_off = OBJ_PTR_TO_OFF(pop,
+			pmalloc_header(pop, args->entry_ptr->pe_prev.off)) +
+			OOB_ENTRY_OFF + NEXT_OFF;
+
+		prev_next_off = OBJ_PTR_TO_OFF(pop,
+			pmalloc_header(pop, args->entry_ptr->pe_next.off)) +
+			OOB_ENTRY_OFF + PREV_OFF;
+	} else {
+		prev_next_off = args->entry_ptr->pe_prev.off +
+			args_common->pe_offset + NEXT_OFF;
+		next_prev_off = args->entry_ptr->pe_next.off +
+			args_common->pe_offset + PREV_OFF;
+	}
 
 	redo_log_store(pop, redo, redo_index + 0, prev_next_off,
 			args_common->obj_doffset);
@@ -302,45 +315,6 @@ list_replace_single(PMEMobjpool *pop,
 		} else {
 			return redo_index;
 		}
-	}
-}
-
-/*
- * list_set_user_field -- (internal) set user's field using redo log
- */
-static size_t
-list_set_user_field(PMEMobjpool *pop,
-	struct redo_log *redo, size_t redo_index,
-	uint64_t field_offset, uint64_t field_value,
-	uint64_t old_offset, uint64_t old_size,
-	uint64_t new_offset)
-{
-	LOG(15, NULL);
-	if (field_offset >= old_offset &&
-		field_offset < old_offset + old_size) {
-		ASSERT(field_offset + sizeof (uint64_t)
-				<= old_offset + old_size);
-		/*
-		 * The user's field is inside the object so we don't need to
-		 * use redo log - just normal store + persist.
-		 */
-		uint64_t new_field_offset = field_offset -
-			old_offset + new_offset;
-
-		uint64_t *field = OBJ_OFF_TO_PTR(pop, new_field_offset);
-		/* temp add custom field change to valgrind transaction */
-		VALGRIND_ADD_TO_TX(field, sizeof (*field));
-		*field = field_value;
-		VALGRIND_REMOVE_FROM_TX(field, sizeof (*field));
-		pop->persist(pop, field, sizeof (*field));
-
-		return redo_index;
-	} else {
-		/* field outside the object */
-		redo_log_store(pop, redo, redo_index,
-				field_offset, field_value);
-
-		return redo_index + 1;
 	}
 }
 
@@ -402,9 +376,21 @@ list_fill_entry_redo_log(PMEMobjpool *pop,
 		ASSERTeq(args->entry_ptr->pe_prev.pool_uuid_lo, pop->uuid_lo);
 	}
 
-	/* set current->next and current->prev using redo log */
-	uint64_t next_off_off = args->obj_doffset + args->pe_offset + NEXT_OFF;
-	uint64_t prev_off_off = args->obj_doffset + args->pe_offset + PREV_OFF;
+	uint64_t next_off_off;
+	uint64_t prev_off_off;
+	if (args->pe_offset == OOB_ENTRY_OFF_REV) {
+		next_off_off = OBJ_PTR_TO_OFF(pop,
+			pmalloc_header(pop, args->obj_doffset)) +
+			OOB_ENTRY_OFF + NEXT_OFF;
+
+		prev_off_off = OBJ_PTR_TO_OFF(pop,
+			pmalloc_header(pop, args->obj_doffset)) +
+			OOB_ENTRY_OFF + PREV_OFF;
+	} else {
+		/* set current->next and current->prev using redo log */
+		next_off_off = args->obj_doffset + args->pe_offset + NEXT_OFF;
+		prev_off_off = args->obj_doffset + args->pe_offset + PREV_OFF;
+	}
 
 	redo_log_store(pop, redo, redo_index + 0, next_off_off, next_offset);
 	redo_log_store(pop, redo, redo_index + 1, prev_off_off, prev_offset);
@@ -431,9 +417,21 @@ list_remove_single(PMEMobjpool *pop,
 	} else {
 		/* set next->prev = prev and prev->next = next */
 		uint64_t next_off = args->entry_ptr->pe_next.off;
-		uint64_t next_prev_off = next_off + args->pe_offset + PREV_OFF;
 		uint64_t prev_off = args->entry_ptr->pe_prev.off;
-		uint64_t prev_next_off = prev_off + args->pe_offset + NEXT_OFF;
+		uint64_t next_prev_off;
+		uint64_t prev_next_off;
+		if (args->pe_offset == OOB_ENTRY_OFF_REV) {
+			next_prev_off = OBJ_PTR_TO_OFF(pop,
+				pmalloc_header(pop, next_off)) +
+				OOB_ENTRY_OFF + PREV_OFF;
+
+			prev_next_off = OBJ_PTR_TO_OFF(pop,
+				pmalloc_header(pop, prev_off)) +
+				OOB_ENTRY_OFF + NEXT_OFF;
+		} else {
+			next_prev_off = next_off + args->pe_offset + PREV_OFF;
+			prev_next_off = prev_off + args->pe_offset + NEXT_OFF;
+		}
 
 		redo_log_store(pop, redo, redo_index + 0,
 				next_prev_off, prev_off);
@@ -579,19 +577,21 @@ list_insert_oob(PMEMobjpool *pop, struct redo_log *redo, size_t redo_index,
 		return redo_index;
 	} else {
 		/* inserting at the last position */
-		struct list_entry *first_ptr =
-			(struct list_entry *)OBJ_OFF_TO_PTR(pop,
-					oob_head->pe_first.off -
-					OBJ_OOB_SIZE + OOB_ENTRY_OFF);
+		struct list_entry *first_ptr = (void *)
+			((uint64_t)pmalloc_header(pop, oob_head->pe_first.off) +
+				OOB_ENTRY_OFF);
 
 		/* current->next = first and current->prev = first->prev */
 		*next_offset = oob_head->pe_first.off;
 		*prev_offset = first_ptr->pe_prev.off;
 
-		uint64_t first_prev_off = oob_head->pe_first.off -
-				OBJ_OOB_SIZE + OOB_ENTRY_OFF + PREV_OFF;
-		uint64_t first_prev_next_off = first_ptr->pe_prev.off -
-				OBJ_OOB_SIZE + OOB_ENTRY_OFF + NEXT_OFF;
+		uint64_t first_prev_off = OBJ_PTR_TO_OFF(pop,
+			pmalloc_header(pop, oob_head->pe_first.off)) +
+			OOB_ENTRY_OFF + PREV_OFF;
+
+		uint64_t first_prev_next_off = OBJ_PTR_TO_OFF(pop,
+			pmalloc_header(pop, first_ptr->pe_prev.off)) +
+			OOB_ENTRY_OFF + NEXT_OFF;
 
 		redo_log_store(pop, redo, redo_index + 0,
 				first_prev_off, obj_offset);
@@ -614,19 +614,20 @@ list_realloc_replace(PMEMobjpool *pop,
 	void (*constructor)(PMEMobjpool *pop, void *ptr, void *arg), void *arg,
 	uint64_t field_offset, uint64_t field_value)
 {
-	uint64_t obj_doffset = obj_offset + OBJ_OOB_SIZE;
-	uint64_t new_obj_doffset = new_obj_offset + OBJ_OOB_SIZE;
+	uint64_t obj_doffset = obj_offset;
+	uint64_t new_obj_doffset = new_obj_offset;
 
 	/* call the constructor manually */
 	void *ptr = OBJ_OFF_TO_PTR(pop, new_obj_doffset);
 	constructor(pop, ptr, arg);
 
 	if (field_offset) {
-		redo_index = list_set_user_field(pop,
-				redo, redo_index,
-				field_offset, field_value,
-				obj_offset, old_size,
-				new_obj_offset);
+		uint64_t field =
+			OBJ_PTR_TO_OFF(pop,
+			pmalloc_header(pop, new_obj_offset)) + field_offset;
+
+		redo_log_store(pop, redo, redo_index, field, field_value);
+		redo_index += 1;
 	}
 
 	if (head) {
@@ -702,8 +703,6 @@ list_insert_new(PMEMobjpool *pop, struct list_head *oob_head,
 	ASSERTne(lane_section, NULL);
 	ASSERTne(lane_section->layout, NULL);
 
-	/* increase allocation size by oob header size */
-	size += OBJ_OOB_SIZE;
 	struct lane_list_section *section =
 		(struct lane_list_section *)lane_section->layout;
 	struct redo_log *redo = section->redo;
@@ -713,14 +712,14 @@ list_insert_new(PMEMobjpool *pop, struct list_head *oob_head,
 	if (constructor) {
 		if ((ret = pmalloc_construct(pop,
 				&section->obj_offset, size,
-				constructor, arg, OBJ_OOB_SIZE))) {
+				constructor, arg))) {
 			errno = ret;
 			ERR("!pmalloc_construct");
 			ret = -1;
 			goto err_pmalloc;
 		}
 	} else {
-		ret = pmalloc(pop, &section->obj_offset, size, OBJ_OOB_SIZE);
+		ret = pmalloc(pop, &section->obj_offset, size);
 		if (ret) {
 			errno = ret;
 			ERR("!pmalloc");
@@ -748,11 +747,12 @@ list_insert_new(PMEMobjpool *pop, struct list_head *oob_head,
 	}
 
 	uint64_t obj_offset = section->obj_offset;
-	uint64_t obj_doffset = obj_offset + OBJ_OOB_SIZE;
+	uint64_t obj_doffset = obj_offset;
 
-	struct list_entry *oob_entry_ptr =
-		(struct list_entry *)OBJ_OFF_TO_PTR(pop,
-			obj_offset + OOB_ENTRY_OFF);
+	struct list_entry *oob_entry_ptr = (void *)
+		((uint64_t)pmalloc_header(pop, obj_offset) + OOB_ENTRY_OFF);
+//		(struct list_entry *)OBJ_OFF_TO_PTR(pop,
+//			obj_offset + OOB_ENTRY_OFF);
 
 	uint64_t oob_next_off;
 	uint64_t oob_prev_off;
@@ -989,11 +989,10 @@ list_remove_free(PMEMobjpool *pop, struct list_head *oob_head,
 	size_t redo_index = 0;
 
 	uint64_t obj_doffset = oidp->off;
-	uint64_t obj_offset = obj_doffset - OBJ_OOB_SIZE;
+	uint64_t obj_offset = obj_doffset;
 
-	struct list_entry *oob_entry_ptr =
-		(struct list_entry *)OBJ_OFF_TO_PTR(pop,
-				obj_offset + OOB_ENTRY_OFF);
+	struct list_entry *oob_entry_ptr = (void *)
+		((uint64_t)pmalloc_header(pop, obj_offset) + OOB_ENTRY_OFF);
 
 	struct list_args_remove oob_args = {
 		.pe_offset = OOB_ENTRY_OFF_REV,
@@ -1044,7 +1043,7 @@ list_remove_free(PMEMobjpool *pop, struct list_head *oob_head,
 	 * Don't need to fill next and prev offsets of removing element
 	 * because the element is freed.
 	 */
-	if ((ret = pfree(pop, &section->obj_offset, OBJ_OOB_SIZE))) {
+	if ((ret = pfree(pop, &section->obj_offset))) {
 		errno = ret;
 		ERR("!pfree");
 		ret = -1;
@@ -1193,11 +1192,10 @@ list_move_oob(PMEMobjpool *pop,
 	size_t redo_index = 0;
 
 	uint64_t obj_doffset = oid.off;
-	uint64_t obj_offset = obj_doffset - OBJ_OOB_SIZE;
+	uint64_t obj_offset = obj_doffset;
 
-	struct list_entry *entry_ptr =
-		(struct list_entry *)OBJ_OFF_TO_PTR(pop, obj_offset
-				+ OOB_ENTRY_OFF);
+	struct list_entry *entry_ptr = (void *)
+		((uint64_t)pmalloc_header(pop, obj_offset) + OOB_ENTRY_OFF);
 
 	struct list_args_remove args_remove = {
 		.pe_offset = OOB_ENTRY_OFF_REV,
@@ -1420,14 +1418,12 @@ list_realloc(PMEMobjpool *pop, struct list_head *oob_head,
 		}
 	}
 
-	/* increase allocation size by oob header size */
-	size += OBJ_OOB_SIZE;
 	struct lane_list_section *section =
 		(struct lane_list_section *)lane_section->layout;
 	struct redo_log *redo = section->redo;
 	size_t redo_index = 0;
 	uint64_t obj_doffset = oidp->off;
-	uint64_t obj_offset = obj_doffset - OBJ_OOB_SIZE;
+	uint64_t obj_offset = obj_doffset;
 	uint64_t old_size = pmalloc_usable_size(pop, obj_offset);
 	uint64_t sec_off_off = OBJ_PTR_TO_OFF(pop, &section->obj_offset);
 
@@ -1455,7 +1451,7 @@ list_realloc(PMEMobjpool *pop, struct list_head *oob_head,
 	 */
 	ret = prealloc_construct(pop,
 			&section->obj_offset, size,
-			constructor, arg, OBJ_OOB_SIZE);
+			constructor, arg);
 
 	if (!ret) {
 		uint64_t sec_size_off = OBJ_PTR_TO_OFF(pop, &section->obj_size);
@@ -1464,12 +1460,16 @@ list_realloc(PMEMobjpool *pop, struct list_head *oob_head,
 		redo_log_store(pop, redo, 0, sec_size_off, 0);
 		redo_log_store(pop, redo, 1, sec_off_off, 0);
 
-		if (field_offset)
+		if (field_offset) {
 			/* set user's field */
-			redo_log_store_last(pop, redo, 2,
-					field_offset, field_value);
-		else
+			uint64_t field =
+				OBJ_PTR_TO_OFF(pop,
+				pmalloc_header(pop, obj_offset)) + field_offset;
+
+			redo_log_store_last(pop, redo, 2, field, field_value);
+		} else {
 			redo_log_set_last(pop, redo, 1);
+		}
 
 		redo_log_process(pop, redo, REDO_NUM_ENTRIES);
 	} else {
@@ -1498,7 +1498,7 @@ list_realloc(PMEMobjpool *pop, struct list_head *oob_head,
 		 * 7. Process the redo log.
 		 * 8. Free the old allocation.
 		 */
-		ret = pmalloc(pop, &section->obj_offset, size, OBJ_OOB_SIZE);
+		ret = pmalloc(pop, &section->obj_offset, size);
 		if (ret) {
 			errno = ret;
 			ERR("!pmalloc");
@@ -1507,7 +1507,7 @@ list_realloc(PMEMobjpool *pop, struct list_head *oob_head,
 		}
 
 		uint64_t new_obj_offset = section->obj_offset;
-		uint64_t new_obj_doffset = new_obj_offset + OBJ_OOB_SIZE;
+		uint64_t new_obj_doffset = new_obj_offset;
 
 		redo_index = list_realloc_replace(pop,
 				redo, redo_index,
@@ -1516,13 +1516,13 @@ list_realloc(PMEMobjpool *pop, struct list_head *oob_head,
 				constructor, arg,
 				field_offset, field_value);
 
-		struct list_entry *oob_entry_ptr =
-			(struct list_entry *)OBJ_OFF_TO_PTR(pop,
-					obj_offset + OOB_ENTRY_OFF);
+		struct list_entry *oob_entry_ptr = (struct list_entry *)
+			((uint64_t)pmalloc_header(pop, obj_offset) +
+			OOB_ENTRY_OFF);
 
-		struct list_entry *oob_new_entry_ptr =
-			(struct list_entry *)OBJ_OFF_TO_PTR(pop,
-					new_obj_offset + OOB_ENTRY_OFF);
+		struct list_entry *oob_new_entry_ptr = (struct list_entry *)
+			((uint64_t)pmalloc_header(pop, new_obj_offset) +
+			OOB_ENTRY_OFF);
 
 		struct list_args_reinsert oob_args_reinsert = {
 			.head = oob_head,
@@ -1562,7 +1562,7 @@ list_realloc(PMEMobjpool *pop, struct list_head *oob_head,
 		redo_log_process(pop, redo, REDO_NUM_ENTRIES);
 
 		/* free the old object */
-		if ((ret = pfree(pop, &section->obj_offset, OBJ_OOB_SIZE))) {
+		if ((ret = pfree(pop, &section->obj_offset))) {
 			errno = ret;
 			ERR("!pfree");
 			ret = -1;
@@ -1635,7 +1635,6 @@ list_realloc_move(PMEMobjpool *pop, struct list_head *oob_head_old,
 	ASSERTne(lane_section->layout, NULL);
 
 	/* increase allocation size by oob header size */
-	size += OBJ_OOB_SIZE;
 	struct lane_list_section *section =
 		(struct lane_list_section *)lane_section->layout;
 	struct redo_log *redo = section->redo;
@@ -1660,7 +1659,7 @@ list_realloc_move(PMEMobjpool *pop, struct list_head *oob_head_old,
 	}
 
 	uint64_t obj_doffset = oidp->off;
-	uint64_t obj_offset = obj_doffset - OBJ_OOB_SIZE;
+	uint64_t obj_offset = obj_doffset;
 	uint64_t new_obj_doffset = obj_doffset;
 	uint64_t new_obj_offset = obj_offset;
 	uint64_t old_size = pmalloc_usable_size(pop, obj_offset);
@@ -1691,7 +1690,7 @@ list_realloc_move(PMEMobjpool *pop, struct list_head *oob_head_old,
 	 */
 	ret = prealloc_construct(pop,
 			&section->obj_offset, size,
-			constructor, arg, OBJ_OOB_SIZE);
+			constructor, arg);
 
 	if (!ret) {
 		uint64_t sec_size_off = OBJ_PTR_TO_OFF(pop, &section->obj_size);
@@ -1703,8 +1702,12 @@ list_realloc_move(PMEMobjpool *pop, struct list_head *oob_head_old,
 
 		/* set user's field */
 		if (field_offset) {
-			redo_log_store(pop, redo, redo_index + 0,
-					field_offset, field_value);
+			uint64_t field =
+				OBJ_PTR_TO_OFF(pop,
+				pmalloc_header(pop, obj_offset)) + field_offset;
+
+			redo_log_store(pop, redo, redo_index,
+				field, field_value);
 			redo_index += 1;
 		}
 
@@ -1735,7 +1738,7 @@ list_realloc_move(PMEMobjpool *pop, struct list_head *oob_head_old,
 		 * 7. Process the redo log.
 		 * 8. Free the old allocation.
 		 */
-		ret = pmalloc(pop, &section->obj_offset, size, OBJ_OOB_SIZE);
+		ret = pmalloc(pop, &section->obj_offset, size);
 		if (ret) {
 			errno = ret;
 			ERR("!pmalloc");
@@ -1744,7 +1747,7 @@ list_realloc_move(PMEMobjpool *pop, struct list_head *oob_head_old,
 		}
 
 		new_obj_offset = section->obj_offset;
-		new_obj_doffset = new_obj_offset + OBJ_OOB_SIZE;
+		new_obj_doffset = new_obj_offset;
 
 		redo_index = list_realloc_replace(pop,
 				redo, redo_index,
@@ -1765,12 +1768,11 @@ list_realloc_move(PMEMobjpool *pop, struct list_head *oob_head_old,
 			oidp->off = new_obj_doffset;
 	}
 
-	struct list_entry *entry_ptr_old =
-		(struct list_entry *)OBJ_OFF_TO_PTR(pop,
-				obj_offset + OOB_ENTRY_OFF);
-	struct list_entry *entry_ptr_new =
-		(struct list_entry *)OBJ_OFF_TO_PTR(pop,
-				new_obj_offset + OOB_ENTRY_OFF);
+	struct list_entry *entry_ptr_old = (void *)
+		((uint64_t)pmalloc_header(pop, obj_offset) + OOB_ENTRY_OFF);
+
+	struct list_entry *entry_ptr_new = (void *)
+		((uint64_t)pmalloc_header(pop, new_obj_offset) + OOB_ENTRY_OFF);
 
 	struct list_args_remove args_remove = {
 		.pe_offset = OOB_ENTRY_OFF_REV,
@@ -1817,7 +1819,7 @@ list_realloc_move(PMEMobjpool *pop, struct list_head *oob_head_old,
 		ASSERTne(section->obj_offset, 0);
 
 		/* realloc not in place so free the old object */
-		if ((ret = pfree(pop, &section->obj_offset, OBJ_OOB_SIZE))) {
+		if ((ret = pfree(pop, &section->obj_offset))) {
 			errno = ret;
 			ERR("!pfree");
 			ret = -1;
@@ -1875,8 +1877,7 @@ lane_list_recovery(PMEMobjpool *pop, struct lane_section_layout *section_layout)
 				 * was performed but the finish flag was not set
 				 * so we need to rollback the realloc.
 				 */
-				ret = prealloc(pop, &section->obj_offset, size,
-						OBJ_OOB_SIZE);
+				ret = prealloc(pop, &section->obj_offset, size);
 				if (ret) {
 					errno = ret;
 					ERR("!prealloc");
@@ -1901,7 +1902,7 @@ lane_list_recovery(PMEMobjpool *pop, struct lane_section_layout *section_layout)
 
 	} else if (section->obj_offset) {
 		/* alloc or free recovery */
-		if ((ret = pfree(pop, &section->obj_offset, OBJ_OOB_SIZE))) {
+		if ((ret = pfree(pop, &section->obj_offset))) {
 			errno = ret;
 			ERR("!pfree");
 			ret = -1;

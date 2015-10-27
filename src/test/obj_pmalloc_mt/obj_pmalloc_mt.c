@@ -61,7 +61,7 @@ alloc_worker(void *arg)
 	struct worker_args *a = arg;
 
 	for (int i = 0; i < OPS_PER_THREAD; ++i) {
-		pmalloc(a->pop, &a->r->offs[a->idx][i], ALLOC_SIZE, 0);
+		pmalloc(a->pop, &a->r->offs[a->idx][i], ALLOC_SIZE);
 		ASSERTne(a->r->offs[a->idx][i], 0);
 	}
 
@@ -74,7 +74,7 @@ realloc_worker(void *arg)
 	struct worker_args *a = arg;
 
 	for (int i = 0; i < OPS_PER_THREAD; ++i) {
-		prealloc(a->pop, &a->r->offs[a->idx][i], REALLOC_SIZE, 0);
+		prealloc(a->pop, &a->r->offs[a->idx][i], REALLOC_SIZE);
 		ASSERTne(a->r->offs[a->idx][i], 0);
 	}
 
@@ -87,7 +87,7 @@ free_worker(void *arg)
 	struct worker_args *a = arg;
 
 	for (int i = 0; i < OPS_PER_THREAD; ++i) {
-		pfree(a->pop, &a->r->offs[a->idx][i], 0);
+		pfree(a->pop, &a->r->offs[a->idx][i]);
 		ASSERTeq(a->r->offs[a->idx][i], 0);
 	}
 
@@ -117,7 +117,7 @@ main(int argc, char *argv[])
 	size_t custom_class = 0;
 
 	if (argc == 3) {
-		custom_class = atoll(argv[1]);
+		custom_class = atoll(argv[2]);
 	}
 
 	PMEMobjpool *pop = pmemobj_create(argv[1], "TEST",

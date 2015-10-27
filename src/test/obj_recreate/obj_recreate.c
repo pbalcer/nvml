@@ -51,7 +51,7 @@ struct root {
 
 #define	LAYOUT_NAME "obj_recreate"
 #define	ZEROLEN 4096
-#define	N PMEMOBJ_MIN_POOL
+#define	N PMEMOBJ_MIN_POOL * 2
 
 int
 main(int argc, char *argv[])
