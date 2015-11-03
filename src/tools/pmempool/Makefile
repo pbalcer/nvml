@@ -30,37 +30,27 @@
 #
 # Makefile -- top Makefile for pmempool
 #
-
-vpath %.c ../../
-vpath %.c ../../common
-vpath %.c ../../libpmemblk
-
-
 TARGET = pmempool
 
-OBJS = pmempool.o info.o info_blk.o info_log.o info_obj.o create.o dump.o\
-       common.o output.o util.o check.o btt.o set.o rm.o
+OBJS = pmempool.o\
+       info.o info_blk.o info_log.o info_obj.o\
+       create.o\
+       dump.o\
+       check.o\
+       rm.o
 
 LIBPMEM=y
 LIBPMEMBLK=y
 LIBPMEMOBJ=y
 LIBPMEMLOG=y
+TOOLS_COMMON=y
+LIBPMEMBLK_PRIV=btt_init btt_fini btt_write
 
 INCS += -I../../common
 INCS += -I../../libpmemlog
 INCS += -I../../libpmemblk
 INCS += -I../../libpmemobj
 
-common.o: CFLAGS += -D__USE_UNIX98
-
-MANPAGES = ../../../doc/pmempool.1\
-           ../../../doc/pmempool-info.1\
-	   ../../../doc/pmempool-create.1\
-	   ../../../doc/pmempool-check.1\
-	   ../../../doc/pmempool-dump.1
-
 BASH_COMP_FILES = pmempool.sh
 
 include ../Makefile.inc
-
-.PHONY: test check

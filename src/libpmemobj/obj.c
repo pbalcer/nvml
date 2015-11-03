@@ -1604,7 +1604,9 @@ constructor_alloc_root(PMEMobjpool *pop, void *ptr, void *arg)
 
 	pop->persist(pop, &ro->size,
 		/* there's no padding between these, so we can add sizes */
-		sizeof (ro->internal_type) + sizeof (ro->user_type));
+		sizeof (ro->size) +
+		sizeof (ro->internal_type) +
+		sizeof (ro->user_type));
 
 	VALGRIND_DO_MAKE_MEM_NOACCESS(pop, &ro->padding, sizeof (ro->padding));
 }

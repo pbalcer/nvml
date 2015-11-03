@@ -1367,27 +1367,27 @@ size_t
 util_plist_nelements(struct pmemobjpool *pop, struct list_head *headp)
 {
 	size_t i = 0;
-	struct list_entry *entryp;
-	PLIST_FOREACH(entryp, pop, headp)
+	PMEMoid oid;
+	PLIST_FOREACH(oid, pop, headp)
 		i++;
 	return i;
 }
 
 /*
- * util_plist_get_entry -- return nth element from list
+ * util_plist_get -- return nth element from list
  */
-struct list_entry *
-util_plist_get_entry(struct pmemobjpool *pop,
+PMEMoid
+util_plist_get(struct pmemobjpool *pop,
 	struct list_head *headp, size_t n)
 {
-	struct list_entry *entryp;
-	PLIST_FOREACH(entryp, pop, headp) {
+	PMEMoid oid;
+	PLIST_FOREACH(oid, pop, headp) {
 		if (n == 0)
-			return entryp;
+			return oid;
 		n--;
 	}
 
-	return NULL;
+	return OID_NULL;
 }
 
 /*

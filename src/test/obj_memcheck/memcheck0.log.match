@@ -33,17 +33,6 @@ $(OPT)==$(N)==    $(S) 0x$(X): pmemobj_free $(*)
 ==$(N)==    by 0x$(X): test_everything (obj_memcheck.c:$(N))
 ==$(N)==    by 0x$(X): main (obj_memcheck.c:$(N))
 ==$(N)== 
-==$(N)== Invalid write of size 1
-==$(N)==    at 0x$(X): test_everything (obj_memcheck.c:$(N))
-==$(N)==    by 0x$(X): main (obj_memcheck.c:$(N))
-==$(N)==  Address 0x$(X) is 1 bytes before a block of size 64 free'd
-$(OPT)==$(N)==    at 0x$(X): pfree $(*)
-$(OPT)==$(N)==    by 0x$(X): list_remove_free $(*)
-$(OPT)==$(N)==    by 0x$(X): obj_free $(*)
-$(OPT)==$(N)==    by 0x$(X): pmemobj_free $(*)
-==$(N)==    by 0x$(X): test_everything (obj_memcheck.c:$(N))
-==$(N)==    by 0x$(X): main (obj_memcheck.c:$(N))
-==$(N)== 
 ==$(N)== Invalid write of size 4
 ==$(N)==    at 0x$(X): test_everything (obj_memcheck.c:$(N))
 ==$(N)==    by 0x$(X): main (obj_memcheck.c:$(N))
@@ -113,4 +102,4 @@ $(OPT)==$(N)==    $(S) 0x$(X): pmemobj_free $(*)
 ==$(N)== 
 ==$(N)== For counts of detected and suppressed errors, rerun with: -v
 ==$(N)== Use --track-origins=yes to see where uninitialised values come from
-==$(N)== ERROR SUMMARY: 10 errors from 10 contexts (suppressed: $(N) from $(N))
+==$(N)== ERROR SUMMARY: 9 errors from 9 contexts (suppressed: $(N) from $(N))

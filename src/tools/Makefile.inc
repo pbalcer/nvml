@@ -31,6 +31,9 @@
 # src/tools/Makefile.inc -- Makefile include for all tools
 #
 
+TOP := $(dir $(lastword $(MAKEFILE_LIST)))/../..
+CSTYLE = $(TOP)/utils/cstyle
+OBJCOPY = objcopy
 INCS += -I. -I..
 INCS += -I../..
 INCS += -I../../include
@@ -49,12 +52,22 @@ TOOLSDIR=$(prefix)/bin
 TARGET_DIR=$(DESTDIR)$(TOOLSDIR)
 BASH_COMP_FILES ?=
 BASH_COMP_DIR =$(DESTDIR)/etc/bash_completion.d/
-CSTYLE=../../../utils/cstyle
 
 TARGET_STATIC_NONDEBUG=$(TARGET).static-nondebug
 TARGET_STATIC_DEBUG=$(TARGET).static-debug
 
 LIBSDIR=../..
+LIBSDIR_DEBUG=$(LIBSDIR)/debug
+LIBSDIR_NONDEBUG=$(LIBSDIR)/nondebug
+
+ifeq ($(DEBUG), y)
+PMEMOBJ_PRIV_DIR=$(LIBSDIR)/debug
+else
+PMEMOBJ_PRIV_DIR=$(LIBSDIR)/nondebug
+endif
+
+PMEMOBJ_PRIV_OBJ=$(PMEMOBJ_PRIV_DIR)/libpmemobj/libpmemobj_unscoped.o
+PMEMBLK_PRIV_OBJ=$(PMEMOBJ_PRIV_DIR)/libpmemblk/libpmemblk_unscoped.o
 
 LIBS += -pthread -luuid
 
@@ -86,6 +99,24 @@ ifeq ($(LIBVMEM),y)
 DYNAMIC_LIBS += -lvmem
 STATIC_DEBUG_LIBS += $(LIBSDIR)/debug/libvmem.a
 STATIC_NONDEBUG_LIBS += $(LIBSDIR)/nondebug/libvmem.a
+endif
+
+ifeq ($(TOOLS_COMMON), y)
+vpath %.c ../../common
+vpath %.c ../../tools/pmempool
+
+LIBPMEMOBJ_PRIV += pmalloc_header
+
+OBJS += common.o output.o util.o set.o
+common.o: CFLAGS += -D__USE_UNIX98
+endif
+
+ifneq ($(LIBPMEMOBJ_PRIV),)
+OBJS += pmemobj_priv.o
+endif
+
+ifneq ($(LIBPMEMBLK_PRIV),)
+OBJS += pmemblk_priv.o
 endif
 
 all: $(TARGET) $(TARGET_STATIC_NONDEBUG) $(TARGET_STATIC_DEBUG)
@@ -142,6 +173,18 @@ $(TARGET): $(OBJS)
 	sed -e 's/#.*//' -e 's/^[^:]*: *//' -e 's/ *\\$$//' \
 	    -e '/^$$/ d' -e 's/$$/ :/' < $*.d >> .deps/$*.P; \
 	$(RM) -f $*.d
+
+$(PMEMOBJ_PRIV_OBJ):
+	$(MAKE) -C $(LIBSDIR) libpmemobj
+
+pmemobj_priv.o: $(PMEMOBJ_PRIV_OBJ)
+	$(OBJCOPY) --localize-hidden $(addprefix -G, $(LIBPMEMOBJ_PRIV)) $< $@
+
+$(PMEMBLK_PRIV_OBJ):
+	$(MAKE) -C $(LIBSDIR) libpmemblk
+
+pmemblk_priv.o: $(PMEMBLK_PRIV_OBJ)
+	$(OBJCOPY) --localize-hidden $(addprefix -G, $(LIBPMEMBLK_PRIV)) $< $@
 
 test check pcheck: all
 

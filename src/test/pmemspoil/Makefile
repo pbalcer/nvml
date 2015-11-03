@@ -30,17 +30,12 @@
 #
 # Makefile -- Makefile for pmemspoil tool
 #
-
-vpath %.c ../../
-vpath %.c ../../tools/pmempool
-vpath %.c ../../common
-CSTYLE = ../../../utils/cstyle
-
 TARGET = pmemspoil
 
-OBJS = common.o output.o util.o set.o spoil.o
+OBJS = spoil.o
 
 LIBPMEM=y
+TOOLS_COMMON=y
 
 LDFLAGS += -L../../nondebug/
 CFLAGS += -I../../tools/pmempool

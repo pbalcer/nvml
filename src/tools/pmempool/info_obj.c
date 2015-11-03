@@ -54,7 +54,7 @@
 
 
 typedef void (*list_callback_fn)(struct pmem_info *pip, int v, int vnum,
-		struct pmemobjpool *pop, struct list_entry *entry, size_t i);
+		struct pmemobjpool *pop, PMEMoid oid, size_t i);
 
 /*
  * lane_need_recovery_redo -- return 1 if redo log needs recovery
@@ -292,9 +292,9 @@ info_obj_list(struct pmem_info *pip, int v, int vnum, struct pmemobjpool *pop,
 				nelements, nelements != 1 ? "s" : "");
 	out_indent(1);
 	size_t i = 0;
-	struct list_entry *entryp;
-	PLIST_FOREACH(entryp, pop, headp) {
-		cb(pip, v, vnum, pop, entryp, i);
+	PMEMoid oid;
+	PLIST_FOREACH(oid, pop, headp) {
+		cb(pip, v, vnum, pop, oid, i);
 		i++;
 	}
 	out_indent(-1);
@@ -344,11 +344,11 @@ info_obj_alloc_hdr(struct pmem_info *pip, int v, struct pmemobjpool *pop,
  */
 static void
 obj_object_cb(struct pmem_info *pip, int v, int vnum, struct pmemobjpool *pop,
-		struct list_entry *entryp, size_t i)
+		PMEMoid oid, size_t i)
 {
-	struct oob_header *oob = ENTRY_TO_OOB_HDR(entryp);
-	struct allocation_header *alloc = ENTRY_TO_ALLOC_HDR(entryp);
-	void *data = ENTRY_TO_DATA(entryp);
+	struct allocation_header *alloc = OID_TO_ALLOC_HDR(pop, oid);
+	struct oob_header *oob = OID_TO_OOB_HDR(pop, oid);
+	void *data = OID_TO_DATA(pop, oid);
 
 	outv_nl(vnum);
 	outv_field(vnum, "Object", "%lu", i);
@@ -369,10 +369,10 @@ obj_object_cb(struct pmem_info *pip, int v, int vnum, struct pmemobjpool *pop,
  */
 static void
 set_entry_cb(struct pmem_info *pip, int v, int vnum, struct pmemobjpool *pop,
-		struct list_entry *entryp, size_t i)
+		PMEMoid oid, size_t i)
 {
-	struct tx_range *range = ENTRY_TO_TX_RANGE(entryp);
-	obj_object_cb(pip, v, vnum, pop, entryp, i);
+	struct tx_range *range = OID_TO_TX_RANGE(pop, oid);
+	obj_object_cb(pip, v, vnum, pop, oid, i);
 
 	outv_title(vnum, "Tx range");
 	outv_field(vnum, "Offset", "0x%016lx", range->offset);
@@ -482,10 +482,10 @@ info_obj_lanes(struct pmem_info *pip, int v,
  */
 static void
 info_obj_store_object_cb(struct pmem_info *pip, int v, int vnum,
-		struct pmemobjpool *pop, struct list_entry *entryp, size_t i)
+		struct pmemobjpool *pop, PMEMoid oid, size_t i)
 {
-	struct allocation_header *alloc = ENTRY_TO_ALLOC_HDR(entryp);
-	struct oob_header *oob = ENTRY_TO_OOB_HDR(entryp);
+	struct allocation_header *alloc = OID_TO_ALLOC_HDR(pop, oid);
+	struct oob_header *oob = OID_TO_OOB_HDR(pop, oid);
 	assert(oob->user_type < PMEMOBJ_NUM_OID_TYPES);
 
 	uint64_t real_size = alloc->size -
@@ -506,7 +506,7 @@ info_obj_store_object_cb(struct pmem_info *pip, int v, int vnum,
 	pip->obj.stats.n_type_objects[oob->user_type]++;
 	pip->obj.stats.n_type_bytes[oob->user_type] += real_size;
 
-	obj_object_cb(pip, v, vnum, pop, entryp, i);
+	obj_object_cb(pip, v, vnum, pop, oid, i);
 }
 
 /*
@@ -718,21 +718,20 @@ info_obj_root_obj(struct pmem_info *pip, int v,
 {
 	struct object_store *obj_store = OFF_TO_PTR(pop,
 			pop->obj_store_offset);
-	struct list_entry *entry = PLIST_OFF_TO_PTR(pop,
-			obj_store->root.head.pe_first.off);
+	PMEMoid root_oid = obj_store->root.head.pe_first;
 
-	if (entry == NULL) {
+	if (OID_IS_NULL(root_oid)) {
 		outv(v, "\nNo root object...\n");
 	} else {
-		struct oob_header *oob = ENTRY_TO_OOB_HDR(entry);
-		void *data = ENTRY_TO_DATA(entry);
+		struct oob_header *oob = OID_TO_OOB_HDR(pop, root_oid);
+		void *data = OID_TO_DATA(pop, root_oid);
 
 		outv(v, "\nRoot object:\n");
 		outv_field(v, "Offset", "0x%016x", PTR_TO_OFF(pop, data));
 		outv_field(v, "Size",
 				out_get_size_str(oob->size, pip->args.human));
 
-		obj_object_cb(pip, v, VERBOSE_SILENT, pop, entry, 0);
+		obj_object_cb(pip, v, VERBOSE_SILENT, pop, root_oid, 0);
 	}
 }
 
