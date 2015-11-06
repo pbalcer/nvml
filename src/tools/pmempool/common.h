@@ -81,27 +81,40 @@ struct range ret = {\
 #define	FOREACH_RANGE(range, ranges)\
 	LIST_FOREACH(range, &(ranges)->head, next)
 
-#define	PLIST_OFF_TO_PTR(pop, off)\
-((off) == 0 ? NULL : (void *)((uintptr_t)(pop) + (off) - OBJ_OOB_SIZE))
+#define	OID_TO_OBJ_PTR(pop, oid)\
+	(pmalloc_header((pop), (oid).off))
 
-#define	PLIST_FOREACH(entry, pop, head)\
-for ((entry) = PLIST_OFF_TO_PTR(pop, (head)->pe_first.off);\
-	(entry) != NULL;\
-	(entry) = ((entry)->pe_next.off == (head)->pe_first.off ?\
-	NULL : PLIST_OFF_TO_PTR(pop, (entry)->pe_next.off)))
+#define	OID_TO_ALLOC_HDR(pop, oid)\
+	(OID_IS_NULL(oid) ? NULL :\
+	(struct allocation_header *)((uintptr_t)OID_TO_OBJ_PTR(pop, oid)\
+	- sizeof (struct allocation_header)))
+
+#define	OID_TO_OOB_HDR(pop, oid)\
+	(OID_IS_NULL(oid) ? NULL :\
+	(struct oob_header *)OID_TO_OBJ_PTR(pop, oid))
+
+#define	OID_TO_LIST_ENTRY(pop, oid)\
+	(OID_IS_NULL(oid) ? NULL :\
+	(struct list_entry *)(&OID_TO_OOB_HDR(pop, oid)->oob))
+
+#define	OID_TO_DATA(pop, oid)\
+	OBJ_OFF_TO_PTR(pop, (oid).off)
+
+#define	OID_TO_TX_RANGE(pop, oid)\
+	((struct tx_range *)OID_TO_DATA(pop, oid))
+
+
+#define	PLIST_OID_TO_ENTRY(pop, oid)\
+	(&OOB_HEADER_FROM_OID(pop, oid)->oob)
+
+#define	PLIST_FOREACH(oid, pop, head)\
+for ((oid) = (head)->pe_first; !OID_IS_NULL(oid);\
+	(oid) = OID_EQUALS(\
+		PLIST_OID_TO_ENTRY(pop, oid)->pe_next,\
+		(head)->pe_first) ? OID_NULL :\
+		PLIST_OID_TO_ENTRY(pop, oid)->pe_next)
 
 #define	PLIST_EMPTY(head) ((head)->pe_first.off == 0)
-
-#define	ENTRY_TO_OOB_HDR(entry) ((struct oob_header *)(entry))
-
-#define	ENTRY_TO_TX_RANGE(entry)\
-((void *)((uintptr_t)(entry) + sizeof (struct oob_header)))
-
-#define	ENTRY_TO_ALLOC_HDR(entry)\
-((void *)((uintptr_t)(entry) - sizeof (struct allocation_header)))
-
-#define	ENTRY_TO_DATA(entry)\
-((void *)((uintptr_t)(entry) + sizeof (struct oob_header)))
 
 #define	DEFAULT_HDR_SIZE 8192
 
@@ -227,7 +240,7 @@ int util_heap_max_zone(size_t size);
 int util_heap_get_bitmap_params(uint64_t block_size, uint64_t *nallocsp,
 		uint64_t *nvalsp, uint64_t *last_valp);
 size_t util_plist_nelements(struct pmemobjpool *pop, struct list_head *headp);
-struct list_entry *util_plist_get_entry(struct pmemobjpool *pop,
+PMEMoid util_plist_get(struct pmemobjpool *pop,
 	struct list_head *headp, size_t n);
 
 static inline uint32_t

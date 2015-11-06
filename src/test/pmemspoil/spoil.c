@@ -249,11 +249,11 @@ struct chunk_pair {
 };
 
 /*
- * struct list_pair -- list head and entry
+ * struct list_element -- list head and oid and pop
  */
-struct list_pair {
+struct list_element {
 	struct list_head *head;
-	struct list_entry *entry;
+	PMEMoid oid;
 };
 
 /*
@@ -1121,14 +1121,14 @@ pmemspoil_process_sec_allocator(struct pmemspoil *psp,
  */
 static int
 pmemspoil_process_entry_remove(struct pmemspoil *psp,
-	struct pmemspoil_list *pfp, struct list_pair lpair)
+	struct pmemspoil_list *pfp, struct list_element elem)
 {
-	struct list_head *head = lpair.head;
-	struct list_entry *entry = lpair.entry;
+	struct list_head *head = elem.head;
+	struct list_entry *entry = OID_TO_LIST_ENTRY(psp->addr, elem.oid);
 	struct pmemobjpool *pop = psp->addr;
-	struct list_entry *first = PLIST_OFF_TO_PTR(pop, head->pe_first.off);
-	struct list_entry *prev = PLIST_OFF_TO_PTR(pop, entry->pe_prev.off);
-	struct list_entry *next = PLIST_OFF_TO_PTR(pop, entry->pe_next.off);
+	struct list_entry *first = OID_TO_LIST_ENTRY(pop, head->pe_first);
+	struct list_entry *prev = OID_TO_LIST_ENTRY(pop, entry->pe_prev);
+	struct list_entry *next = OID_TO_LIST_ENTRY(pop, entry->pe_next);
 
 	if (prev == next) {
 		head->pe_first.off = 0;
@@ -1147,10 +1147,8 @@ pmemspoil_process_entry_remove(struct pmemspoil *psp,
  */
 static int
 pmemspoil_process_oob(struct pmemspoil *psp,
-	struct pmemspoil_list *pfp, struct list_entry *entry)
+	struct pmemspoil_list *pfp, struct oob_header *oob)
 {
-	struct oob_header *oob = ENTRY_TO_OOB_HDR(entry);
-
 	PROCESS_BEGIN(psp, pfp) {
 		PROCESS_FIELD(oob, internal_type, uint16_t);
 		PROCESS_FIELD(oob, user_type, uint16_t);
@@ -1165,10 +1163,8 @@ pmemspoil_process_oob(struct pmemspoil *psp,
  */
 static int
 pmemspoil_process_tx_range(struct pmemspoil *psp,
-	struct pmemspoil_list *pfp, struct list_entry *entry)
+	struct pmemspoil_list *pfp, struct tx_range *range)
 {
-	struct tx_range *range = ENTRY_TO_TX_RANGE(entry);
-
 	PROCESS_BEGIN(psp, pfp) {
 		PROCESS_FIELD(range, offset, uint64_t);
 		PROCESS_FIELD(range, size, uint64_t);
@@ -1182,16 +1178,19 @@ pmemspoil_process_tx_range(struct pmemspoil *psp,
  */
 static int
 pmemspoil_process_entry(struct pmemspoil *psp,
-	struct pmemspoil_list *pfp, struct list_pair lpair)
+	struct pmemspoil_list *pfp, struct list_element elem)
 {
-	struct list_entry *entry = lpair.entry;
+	struct list_entry *entry = OID_TO_LIST_ENTRY(psp->addr, elem.oid);
+	struct oob_header *oobh = OID_TO_OOB_HDR(psp->addr, elem.oid);
+	struct tx_range *tx_range = OID_TO_TX_RANGE(psp->addr, elem.oid);
+
 	PROCESS_BEGIN(psp, pfp) {
 		PROCESS_FIELD(entry, pe_next, PMEMoid);
 		PROCESS_FIELD(entry, pe_prev, PMEMoid);
-		PROCESS(oob, entry, 1);
-		PROCESS(tx_range, entry, 1);
+		PROCESS(oob, oobh, 1);
+		PROCESS(tx_range, tx_range, 1);
 
-		PROCESS_FUNC("remove", entry_remove, lpair);
+		PROCESS_FUNC("remove", entry_remove, elem);
 	} PROCESS_END
 
 	return PROCESS_RET;
@@ -1207,15 +1206,15 @@ pmemspoil_process_list(struct pmemspoil *psp,
 	size_t nelements = util_plist_nelements(psp->addr, head);
 
 	PROCESS_BEGIN(psp, pfp) {
-		struct list_pair lpair = {
+		struct list_element elem = {
 			.head = head,
-			.entry = util_plist_get_entry(psp->addr,
+			.oid = util_plist_get(psp->addr,
 					head, PROCESS_INDEX),
 		};
 
 		PROCESS_FIELD(head, pe_first, PMEMoid);
 
-		PROCESS(entry, lpair, nelements);
+		PROCESS(entry, elem, nelements);
 	} PROCESS_END
 
 	return PROCESS_RET;

@@ -71,12 +71,12 @@ test_memcheck_bug()
 }
 
 static void
-test_everything(const char *path, int overwrite_oob)
+test_everything(const char *path, int off_by_one)
 {
 	PMEMobjpool *pop = NULL;
 
 	if ((pop = pmemobj_create(path, POBJ_LAYOUT_NAME(mc),
-			PMEMOBJ_MIN_POOL, S_IWUSR | S_IRUSR)) == NULL)
+			2 * PMEMOBJ_MIN_POOL, S_IWUSR | S_IRUSR)) == NULL)
 		FATAL("!pmemobj_create: %s", path);
 
 	struct root *rt = D_RW(POBJ_ROOT(pop, struct root));
@@ -106,8 +106,8 @@ test_everything(const char *path, int overwrite_oob)
 	memset(s2, 0, pmemobj_alloc_usable_size(rt->s2.oid));
 	s2->fld = 12; /* ok */
 
-	if (overwrite_oob) {
-		/* overwrite padding from oob_header */
+	if (off_by_one) {
+		/* off by one */
 		char *t = (void *)s2;
 		t[-1] = 0x66;
 	}
@@ -130,8 +130,6 @@ test_everything(const char *path, int overwrite_oob)
 	/* invalid write to REALLOCated and FREEd object */
 	s2->dyn[0] = 9;
 	pmemobj_persist(pop, s2, sizeof (struct struct1) + 100 * sizeof (int));
-
-
 
 	POBJ_ALLOC(pop, &rt->s2, struct struct1, sizeof (struct struct1),
 			NULL, NULL);
