@@ -276,7 +276,6 @@ cmsg_handle(uv_stream_t *client, struct client_data *data)
 		ret = protocol_impl[i](client, data->buf, data->len);
 	}
 
-	memset(data->buf, 0, data->buf_len); /* reuse the buffer */
 	data->len = 0; /* reset the message length */
 
 	return ret;
@@ -301,7 +300,8 @@ cmsg_handle_stream(uv_stream_t *client, struct client_data *data, char *buf,
 	while ((last = memchr(buf, '\n', nread)) != NULL) {
 		len = last - buf + 1;
 		nread -= last - buf + 1;
-		memcpy(data->buf + data->len, buf, (last - buf + 1));
+		assert(data->len + len <= data->buf_len);
+		memcpy(data->buf + data->len, buf, len);
 		data->len += len;
 
 		if ((ret = cmsg_handle(client, data)) != 0)
@@ -318,13 +318,15 @@ cmsg_handle_stream(uv_stream_t *client, struct client_data *data, char *buf,
 	return 0;
 }
 
+static uv_buf_t msg_buf = {0};
+
 /*
- * alloc_cb -- allocate buffer for incoming client message
+ * get_read_buf_cb -- returns buffer for incoming client message
  */
 static uv_buf_t
-alloc_cb(uv_handle_t *handle, size_t size)
+get_read_buf_cb(uv_handle_t *handle, size_t size)
 {
-	return uv_buf_init(malloc(size), size);
+	return msg_buf;
 }
 
 /*
@@ -342,20 +344,21 @@ read_cb(uv_stream_t *client, ssize_t nread, const uv_buf_t buf)
 
 	struct client_data *d = client->data;
 
-	char *cbuf = realloc(d->buf, d->buf_len + nread + 1);
-	assert(cbuf != NULL);
+	if (d->buf_len < (d->len + nread + 1)) {
+		char *cbuf = realloc(d->buf, d->buf_len + nread + 1);
+		assert(cbuf != NULL);
 
-	d->buf_len += nread + 1;
-	d->len = 0;
-	d->buf = cbuf;
-	memset(d->buf, 0, d->buf_len);
+		/* zero only the new memory */
+		memset(cbuf + d->buf_len, 0, nread + 1);
+
+		d->buf_len += nread + 1;
+		d->buf = cbuf;
+	}
 
 	if (cmsg_handle_stream(client, client->data, buf.base, nread)) {
 		printf("client disconnect\n");
 		uv_close((uv_handle_t *)client, client_close_cb);
 	}
-
-	free(buf.base);
 }
 
 /*
@@ -368,6 +371,7 @@ connection_cb(uv_stream_t *server, int status)
 		printf("client connect error\n");
 		return;
 	}
+	printf("new client\n");
 
 	uv_tcp_t *client = malloc(sizeof (uv_tcp_t));
 	assert(client != NULL);
@@ -376,7 +380,7 @@ connection_cb(uv_stream_t *server, int status)
 	uv_tcp_init(loop, client);
 
 	if (uv_accept(server, (uv_stream_t *)client) == 0) {
-		uv_read_start((uv_stream_t *)client, alloc_cb, read_cb);
+		uv_read_start((uv_stream_t *)client, get_read_buf_cb, read_cb);
 	} else {
 		uv_close((uv_handle_t *)client, client_close_cb);
 	}
@@ -403,7 +407,9 @@ get_map_ops_by_string(const char *type)
 	return NULL;
 }
 
-#define	KV_SIZE	PMEMOBJ_MIN_POOL
+#define	KV_SIZE	(PMEMOBJ_MIN_POOL)
+
+#define	MAX_READ_LEN (64 * 1024) /* 64 kilobytes */
 
 int
 main(int argc, char *argv[])
@@ -417,6 +423,12 @@ main(int argc, char *argv[])
 	const char *path = argv[2];
 	const char *type = argv[1];
 	int port = atoi(argv[3]);
+
+	/* use only a single buffer for all incoming data */
+	void *read_buf = malloc(MAX_READ_LEN);
+	assert(read_buf != NULL);
+
+	msg_buf = uv_buf_init(read_buf, MAX_READ_LEN);
 
 	if (access(path, F_OK) != 0) {
 		pop = pmemobj_create(path, POBJ_LAYOUT_NAME(kv_server),
@@ -470,6 +482,8 @@ main(int argc, char *argv[])
 	uv_loop_delete(loop);
 	map_ctx_free(mapc);
 	pmemobj_close(pop);
+
+	free(read_buf);
 
 	return 0;
 }
