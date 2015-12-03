@@ -41,7 +41,7 @@ LIBRARIES = map_ctree map_btree map_rbtree\
 
 LIBUV := $(shell pkg-config libuv && echo "y" || echo "n")
 ifeq ($(LIBUV),y)
-PROGS += kv_server
+PROGS += kv_server kv_client
 endif
 
 LIBS = -lpmemobj -pthread $(shell pkg-config --libs libuv)
@@ -55,6 +55,7 @@ CFLAGS += -I../tree_map
 mapcli: mapcli.o libmap.a
 data_store: data_store.o libmap.a
 kv_server: kv_server.o libmap.a
+kv_client: kv_client.o
 
 libmap_ctree.o: map_ctree.o map.o ../tree_map/libctree_map.a
 libmap_btree.o: map_btree.o map.o ../tree_map/libbtree_map.a

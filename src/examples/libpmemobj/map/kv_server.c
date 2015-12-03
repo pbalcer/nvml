@@ -158,6 +158,7 @@ response_msg(uv_stream_t *client, enum resp_messages msg)
 static int
 cmsg_insert_handler(uv_stream_t *client, const char *msg, size_t len)
 {
+	static long long unsigned count;
 	int result = 0;
 	TX_BEGIN(pop) {
 		/*
@@ -177,7 +178,10 @@ cmsg_insert_handler(uv_stream_t *client, const char *msg, size_t len)
 		D_RW(val)->buf[strlen(D_RO(val)->buf)] = '\n';
 
 		map_insert(mapc, map, djb2_hash(key), val.oid);
+	} TX_ONCOMMIT {
+		count++;
 	} TX_ONABORT {
+		printf("failed at %llu\n", count);
 		result = 1;
 	} TX_END
 
@@ -407,7 +411,7 @@ get_map_ops_by_string(const char *type)
 	return NULL;
 }
 
-#define	KV_SIZE	(PMEMOBJ_MIN_POOL)
+#define	KV_SIZE	(PMEMOBJ_MIN_POOL * 100)
 
 #define	MAX_READ_LEN (64 * 1024) /* 64 kilobytes */
 
