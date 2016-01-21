@@ -1779,6 +1779,7 @@ heap_run_foreach_object(PMEMobjpool *pop, object_callback cb, struct chunk_run *
 	int bitmap_vals = RUN_NALLOCS(bs) / BITS_PER_VALUE;
 	uint64_t block_off;
 	struct allocation_header *alloc;
+	PMEMoid oid;
 
 	for (int i = 0; i < bitmap_vals; ++i) {
 		uint64_t v = run->bitmap[i];
@@ -1788,6 +1789,9 @@ heap_run_foreach_object(PMEMobjpool *pop, object_callback cb, struct chunk_run *
 			if (!BIT_IS_CLR(v, j)) {
 				alloc = (struct allocation_header *)(run->data + block_off + j);
 				j += alloc->size / bs;
+				oid.off = (char *)alloc - (char *)pop + 64;
+				oid.pool_uuid_lo = pop->uuid_lo;
+				cb(oid);
 			}
 		}
 	}
