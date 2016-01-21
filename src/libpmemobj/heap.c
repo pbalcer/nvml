@@ -1775,7 +1775,22 @@ heap_check(PMEMobjpool *pop)
 void
 heap_run_foreach_object(PMEMobjpool *pop, object_callback cb, struct chunk_run *run)
 {
+	uint64_t bs = run->block_size;
+	int bitmap_vals = RUN_NALLOCS(bs) / BITS_PER_VALUE;
+	uint64_t block_off;
+	struct allocation_header *alloc;
 
+	for (int i = 0; i < bitmap_vals; ++i) {
+		uint64_t v = run->bitmap[i];
+		block_off = (uint16_t)(BITS_PER_VALUE * i);
+
+		for (unsigned j = 0; j < BITS_PER_VALUE; ++j) {
+			if (!BIT_IS_CLR(v, j)) {
+				alloc = (struct allocation_header *)(run->data + block_off + j);
+				j += alloc->size / bs;
+			}
+		}
+	}
 }
 
 void
