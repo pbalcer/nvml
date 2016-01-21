@@ -1771,3 +1771,53 @@ heap_check(PMEMobjpool *pop)
 
 	return 0;
 }
+
+void
+heap_run_foreach_object(PMEMobjpool *pop, object_callback cb, struct chunk_run *run)
+{
+
+}
+
+void
+heap_chunk_foreach_object(PMEMobjpool *pop, object_callback cb, struct chunk_header *hdr, struct chunk *chunk)
+{
+	switch (hdr->type) {
+		case CHUNK_TYPE_FREE:
+			return;
+		case CHUNK_TYPE_USED: {
+			PMEMoid oid;
+			oid.off = (char *)chunk - (char *)pop;
+			oid.pool_uuid_lo = pop->uuid_lo;
+			cb(oid);
+		}
+		return;
+		case CHUNK_TYPE_RUN:
+			return;
+		default:
+			ASSERT(0);
+	}
+}
+
+void
+heap_zone_foreach_object(PMEMobjpool *pop, object_callback cb, struct zone *zone)
+{
+	if (zone->header.magic == 0)
+		return;
+
+	uint32_t i;
+	for (i = 0; i < zone->header.size_idx; ) {
+		heap_chunk_foreach_object(pop, cb, &zone->chunk_headers[i], &zone->chunks[i]);
+
+		i += zone->chunk_headers[i].size_idx;
+	}
+}
+
+void
+heap_foreach_object(PMEMobjpool *pop, object_callback cb)
+{
+	struct heap_layout *layout = heap_get_layout(pop);
+
+	for (unsigned i = 0; i < heap_max_zone(layout->header.size); ++i) {
+		heap_zone_foreach_object(pop, cb, &layout->zones[i]);
+	}
+}
