@@ -529,6 +529,10 @@ test_tx_api(PMEMobjpool *pop)
 	} TX_END
 }
 
+static void foreach_cb(PMEMoid oid, void *arg) {
+	printf("foreach: %lu\n", oid.off);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -542,13 +546,26 @@ main(int argc, char *argv[])
 	PMEMobjpool *pop = NULL;
 
 	if ((pop = pmemobj_create(path, POBJ_LAYOUT_NAME(basic),
-			0, S_IWUSR | S_IRUSR)) == NULL)
+			PMEMOBJ_MIN_POOL, S_IWUSR | S_IRUSR)) == NULL)
 		FATAL("!pmemobj_create: %s", path);
 
+if (0) {
 	test_alloc_api(pop);
 	test_realloc_api(pop);
 	test_list_api(pop);
 	test_tx_api(pop);
+}
+
+	PMEMoid oid[4];
+	pmemobj_alloc(pop, &oid[0], 100, 0, NULL, NULL);
+	pmemobj_alloc(pop, &oid[1], 100, 0, NULL, NULL);
+	pmemobj_alloc(pop, &oid[2], 100, 0, NULL, NULL);
+	pmemobj_alloc(pop, &oid[3], 300*1024, 0, NULL, NULL);
+	printf("alloc: %lu %lu %lu %lu\n", oid[0].off, oid[1].off, oid[2].off, oid[3].off);
+	pmemobj_free(&oid[1]);
+
+	pmemobj_foreach(pop, foreach_cb, NULL);
+
 
 	pmemobj_close(pop);
 

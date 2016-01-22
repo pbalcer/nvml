@@ -1772,71 +1772,74 @@ heap_check(PMEMobjpool *pop)
 	return 0;
 }
 
-void
-heap_run_foreach_object(PMEMobjpool *pop, object_callback cb, struct chunk_run *run)
+static void
+heap_run_foreach_object(PMEMobjpool *pop, object_callback cb, void *arg, struct chunk_run *run)
 {
 	uint64_t bs = run->block_size;
-	int bitmap_vals = RUN_NALLOCS(bs) / BITS_PER_VALUE;
+	uint64_t bitmap_vals = RUN_NALLOCS(bs) / BITS_PER_VALUE;
 	uint64_t block_off;
 	struct allocation_header *alloc;
 	PMEMoid oid;
 
-	for (int i = 0; i < bitmap_vals; ++i) {
+	for (int i = 0; i < (int)bitmap_vals; ++i) {
 		uint64_t v = run->bitmap[i];
-		block_off = (uint16_t)(BITS_PER_VALUE * i);
+		block_off = (BITS_PER_VALUE * (uint64_t)i);
 
-		for (unsigned j = 0; j < BITS_PER_VALUE; ++j) {
+		for (unsigned j = 0; j < BITS_PER_VALUE;) {
 			if (!BIT_IS_CLR(v, j)) {
-				alloc = (struct allocation_header *)(run->data + block_off + j);
-				j += alloc->size / bs;
+				alloc = (struct allocation_header *)(run->data + (block_off + j)*bs);
+				j += (int)(alloc->size / bs);
 				oid.off = (char *)alloc - (char *)pop + 64;
 				oid.pool_uuid_lo = pop->uuid_lo;
-				cb(oid);
+				cb(oid, arg);
+			} else {
+				++j;
 			}
 		}
 	}
 }
 
-void
-heap_chunk_foreach_object(PMEMobjpool *pop, object_callback cb, struct chunk_header *hdr, struct chunk *chunk)
+static void
+heap_chunk_foreach_object(PMEMobjpool *pop, object_callback cb, void *arg, struct chunk_header *hdr, struct chunk *chunk)
 {
 	switch (hdr->type) {
 		case CHUNK_TYPE_FREE:
 			return;
 		case CHUNK_TYPE_USED: {
-			PMEMoid oid;
-			oid.off = (char *)chunk - (char *)pop;
-			oid.pool_uuid_lo = pop->uuid_lo;
-			cb(oid);
-		}
-		return;
+				PMEMoid oid;
+				oid.off = (char *)chunk - (char *)pop + 64;
+				oid.pool_uuid_lo = pop->uuid_lo;
+				cb(oid, arg);
+			}
+			return;
 		case CHUNK_TYPE_RUN:
+			heap_run_foreach_object(pop, cb, arg, (struct chunk_run *)chunk);
 			return;
 		default:
 			ASSERT(0);
 	}
 }
 
-void
-heap_zone_foreach_object(PMEMobjpool *pop, object_callback cb, struct zone *zone)
+static void
+heap_zone_foreach_object(PMEMobjpool *pop, object_callback cb, void *arg, struct zone *zone)
 {
 	if (zone->header.magic == 0)
 		return;
 
 	uint32_t i;
 	for (i = 0; i < zone->header.size_idx; ) {
-		heap_chunk_foreach_object(pop, cb, &zone->chunk_headers[i], &zone->chunks[i]);
+		heap_chunk_foreach_object(pop, cb, arg, &zone->chunk_headers[i], &zone->chunks[i]);
 
 		i += zone->chunk_headers[i].size_idx;
 	}
 }
 
 void
-heap_foreach_object(PMEMobjpool *pop, object_callback cb)
+heap_foreach_object(PMEMobjpool *pop, object_callback cb, void *arg)
 {
 	struct heap_layout *layout = heap_get_layout(pop);
 
 	for (unsigned i = 0; i < heap_max_zone(layout->header.size); ++i) {
-		heap_zone_foreach_object(pop, cb, &layout->zones[i]);
+		heap_zone_foreach_object(pop, cb, arg, &layout->zones[i]);
 	}
 }

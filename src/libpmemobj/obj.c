@@ -1986,3 +1986,9 @@ _pobj_debug_notice(const char *api_name, const char *file, int line)
 	}
 #endif /* DEBUG */
 }
+
+void
+pmemobj_foreach(PMEMobjpool *pop, void (*callback)(PMEMoid oid, void *arg), void *arg)
+{
+	heap_foreach_object(pop, callback, arg);
+}
