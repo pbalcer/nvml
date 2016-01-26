@@ -38,9 +38,9 @@
 
 #include "libpmemobj.h"
 #include "util.h"
+#include "redo.h"
 #include "pmalloc.h"
 #include "lane.h"
-#include "redo.h"
 #include "list.h"
 #include "obj.h"
 #include "out.h"
@@ -139,7 +139,7 @@ static void
 persist_alloc(PMEMobjpool *pop, struct lane_section *lane,
 	struct memory_block m, uint64_t real_size, uint64_t *off,
 	void (*constructor)(PMEMobjpool *pop, void *ptr, size_t usable_size,
-	void *arg), void *arg, uint64_t data_off)
+	void *arg), void *arg, uint64_t data_off, int mod_undo, struct redo_log *redo, size_t nentries)
 {
 #ifdef DEBUG
 	if (heap_block_is_allocated(pop, m)) {
@@ -177,12 +177,22 @@ persist_alloc(PMEMobjpool *pop, struct lane_section *lane,
 	struct allocator_lane_section *sec =
 		(struct allocator_lane_section *)lane->layout;
 
-	redo_log_store(pop, sec->redo, ALLOC_OP_REDO_PTR_OFFSET,
-		pop_offset(pop, off), pop_offset(pop, datap));
-	redo_log_store_last(pop, sec->redo, ALLOC_OP_REDO_HEADER,
-		pop_offset(pop, hdr), op_result);
+	int idx = 0;
+	uint64_t value = pop_offset(pop, datap) + (mod_undo ? data_off : 0);
+	if (OBJ_PTR_IS_VALID(pop, off)) {
+		redo_log_store(pop, sec->redo, idx++,
+			pop_offset(pop, off), value);
+	} else if (off != NULL){
+		*off = value;
+	}
 
-	redo_log_process(pop, sec->redo, MAX_ALLOC_OP_REDO);
+	redo_log_store(pop, sec->redo, idx++,
+		pop_offset(pop, hdr), op_result);
+	for (size_t i = 0; i < nentries; ++i)
+		redo_log_store(pop, sec->redo, idx++, redo[i].offset, redo[i].value);
+	redo_log_set_last(pop, sec->redo, idx - 1);
+
+	redo_log_process(pop, sec->redo, idx);
 
 	heap_unlock_if_run(pop, m);
 }
@@ -212,6 +222,14 @@ int
 pmalloc_construct(PMEMobjpool *pop, uint64_t *off, size_t size,
 	void (*constructor)(PMEMobjpool *pop, void *ptr,
 	size_t usable_size, void *arg), void *arg, uint64_t data_off)
+{
+	return pmalloc_construct_redo(pop, off, size, constructor, arg, data_off, 0, NULL, 0);
+}
+
+int
+pmalloc_construct_redo(PMEMobjpool *pop, uint64_t *off, size_t size,
+	void (*constructor)(PMEMobjpool *pop, void *ptr, size_t usable_size,
+	void *arg), void *arg, uint64_t data_off, int mod_undo, struct redo_log *redo, size_t nentries)
 {
 	int err;
 
@@ -259,7 +277,7 @@ pmalloc_construct(PMEMobjpool *pop, uint64_t *off, size_t size,
 	 * allocation persistent.
 	 */
 	uint64_t real_size = b->unit_size * m.size_idx;
-	persist_alloc(pop, lane, m, real_size, off, constructor, arg, data_off);
+	persist_alloc(pop, lane, m, real_size, off, constructor, arg, data_off, mod_undo, redo, nentries);
 	err = 0;
 out:
 	lane_release(pop);

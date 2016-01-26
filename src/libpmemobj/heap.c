@@ -666,6 +666,10 @@ heap_assign_run_bucket(PMEMobjpool *pop, struct chunk_run *run,
 struct bucket *
 heap_get_chunk_bucket(PMEMobjpool *pop, uint32_t chunk_id, uint32_t zone_id)
 {
+	if (zone_id >= pop->heap->zones_exhausted) {
+		
+	}
+
 	ASSERT(zone_id < pop->heap->max_zone);
 	struct zone *z = &pop->heap->layout->zones[zone_id];
 

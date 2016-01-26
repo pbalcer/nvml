@@ -1136,7 +1136,6 @@ obj_alloc_construct(PMEMobjpool *pop, PMEMoid *oidp, size_t size,
 		return -1;
 	}
 
-	struct list_head *lhead = &pop->store->bytype[type_num].head;
 	struct carg_bytype carg;
 
 	carg.user_type = type_num;
@@ -1144,8 +1143,16 @@ obj_alloc_construct(PMEMobjpool *pop, PMEMoid *oidp, size_t size,
 	carg.constructor = constructor;
 	carg.arg = arg;
 
-	return list_insert_new_oob(pop, lhead, size, constructor_alloc_bytype,
-			&carg, oidp);
+	if (OBJ_PTR_IS_VALID(pop, oidp)) {
+		struct redo_log l = {OBJ_PTR_TO_OFF(pop, &oidp->pool_uuid_lo), pop->uuid_lo};
+		return pmalloc_construct_redo(pop, &oidp->off, size + sizeof (struct oob_header), constructor_alloc_bytype, &carg, sizeof (struct oob_header), 1, &l, 1);
+	} else {
+		int ret = pmalloc_construct_redo(pop, oidp != NULL ? &oidp->off : NULL, size + sizeof (struct oob_header), constructor_alloc_bytype, &carg, sizeof (struct oob_header), 1, NULL, 0);
+		if (oidp != NULL)
+			oidp->pool_uuid_lo = pop->uuid_lo;
+
+		return ret;
+	}
 }
 
 /*
