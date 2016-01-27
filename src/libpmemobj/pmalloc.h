@@ -40,10 +40,6 @@ void heap_vg_open(PMEMobjpool *pop);
 void heap_cleanup(PMEMobjpool *pop);
 int heap_check(PMEMobjpool *pop);
 
-typedef void (*object_callback)(PMEMoid oid, void *arg);
-
-void heap_foreach_object(PMEMobjpool *pop, object_callback cb, void *arg);
-
 int pmalloc(PMEMobjpool *pop, uint64_t *off, size_t size, uint64_t data_off);
 int pmalloc_construct(PMEMobjpool *pop, uint64_t *off, size_t size,
 	void (*constructor)(PMEMobjpool *pop, void *ptr, size_t usable_size,
@@ -59,4 +55,5 @@ int prealloc_construct(PMEMobjpool *pop, uint64_t *off, size_t size,
 	void *arg), void *arg, uint64_t data_off);
 
 size_t pmalloc_usable_size(PMEMobjpool *pop, uint64_t off);
+void pfree_redo(PMEMobjpool *pop, uint64_t *off, uint64_t data_off, struct redo_log *redo, size_t nentries);
 void pfree(PMEMobjpool *pop, uint64_t *off, uint64_t data_off);

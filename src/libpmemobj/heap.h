@@ -82,6 +82,12 @@ void heap_degrade_run_if_empty(PMEMobjpool *pop, struct bucket *b,
 struct memory_block heap_free_block(PMEMobjpool *pop, struct bucket *b,
 	struct memory_block m, void *hdr, uint64_t *op_result);
 
+
+typedef void (*object_callback)(PMEMoid oid, void *arg);
+
+void heap_foreach_object(PMEMobjpool *pop, object_callback cb, void *arg, struct memory_block start);
+
+
 #ifdef DEBUG
 int heap_block_is_allocated(PMEMobjpool *pop, struct memory_block m);
 #endif /* DEBUG */

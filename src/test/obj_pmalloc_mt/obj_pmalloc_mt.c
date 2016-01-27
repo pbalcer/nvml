@@ -36,11 +36,13 @@
 #include <stdint.h>
 
 #include "libpmemobj.h"
+#include "redo.h"
 #include "pmalloc.h"
 #include "unittest.h"
+#include <assert.h>
 
-#define	THREADS 32
-#define	OPS_PER_THREAD 1000
+#define	THREADS 1
+#define	OPS_PER_THREAD 1000000
 #define	ALLOC_SIZE 100
 #define	REALLOC_SIZE (ALLOC_SIZE * 3)
 #define	FRAGMENTATION 3
@@ -62,8 +64,10 @@ alloc_worker(void *arg)
 	struct worker_args *a = arg;
 
 	for (int i = 0; i < OPS_PER_THREAD; ++i) {
-		pmalloc(a->pop, &a->r->offs[a->idx][i], ALLOC_SIZE, 0);
-		ASSERTne(a->r->offs[a->idx][i], 0);
+		//void *ptr = malloc(ALLOC_SIZE);
+		//assert(ptr != NULL);
+		pmalloc(a->pop, NULL, ALLOC_SIZE, 0);
+		//ASSERTne(a->r->offs[a->idx][i], 0);
 	}
 
 	return NULL;
@@ -200,11 +204,11 @@ main(int argc, char *argv[])
 	}
 
 	run_worker(alloc_worker, args);
-	run_worker(realloc_worker, args);
+	if (0){run_worker(realloc_worker, args);
 	run_worker(free_worker, args);
 	run_worker(mix_worker, args);
 	run_worker(tx_worker, args);
-	run_worker(alloc_free_worker, args);
+	run_worker(alloc_free_worker, args);}
 
 	DONE(NULL);
 }

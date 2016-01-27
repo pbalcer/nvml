@@ -136,7 +136,7 @@ get_mblock_from_alloc(PMEMobjpool *pop, struct bucket *b,
  *	memory block previously reserved by volatile bucket
  */
 static void
-persist_alloc(PMEMobjpool *pop, struct lane_section *lane,
+persist_alloc(PMEMobjpool *pop,
 	struct memory_block m, uint64_t real_size, uint64_t *off,
 	void (*constructor)(PMEMobjpool *pop, void *ptr, size_t usable_size,
 	void *arg), void *arg, uint64_t data_off, int mod_undo, struct redo_log *redo, size_t nentries)
@@ -172,27 +172,39 @@ persist_alloc(PMEMobjpool *pop, struct lane_section *lane,
 
 	heap_lock_if_run(pop, m);
 
-	void *hdr = heap_get_block_header(pop, m, HEAP_OP_ALLOC, &op_result);
+	uint64_t *hdr = heap_get_block_header(pop, m, HEAP_OP_ALLOC, &op_result);
 
-	struct allocator_lane_section *sec =
-		(struct allocator_lane_section *)lane->layout;
-
-	int idx = 0;
-	uint64_t value = pop_offset(pop, datap) + (mod_undo ? data_off : 0);
+	uint64_t off_value = pop_offset(pop, datap) + (mod_undo ? data_off : 0);
 	if (OBJ_PTR_IS_VALID(pop, off)) {
+		struct lane_section *lane;
+		lane_hold(pop, &lane, LANE_SECTION_ALLOCATOR);
+
+		struct allocator_lane_section *sec =
+			(struct allocator_lane_section *)lane->layout;
+
+		int idx = 0;
+
 		redo_log_store(pop, sec->redo, idx++,
-			pop_offset(pop, off), value);
-	} else if (off != NULL){
-		*off = value;
+			pop_offset(pop, off), off_value);
+
+		redo_log_store(pop, sec->redo, idx++,
+			pop_offset(pop, hdr), op_result);
+		for (size_t i = 0; i < nentries; ++i)
+			redo_log_store(pop, sec->redo, idx++,
+				redo[i].offset, redo[i].value);
+
+		redo_log_set_last(pop, sec->redo, idx - 1);
+
+		redo_log_process(pop, sec->redo, idx);
+
+		lane_release(pop);
+	} else {
+		*hdr = op_result;
+		pop->persist(pop, hdr, sizeof (*hdr));
+		if (off != NULL) {
+			*off = off_value;
+		}
 	}
-
-	redo_log_store(pop, sec->redo, idx++,
-		pop_offset(pop, hdr), op_result);
-	for (size_t i = 0; i < nentries; ++i)
-		redo_log_store(pop, sec->redo, idx++, redo[i].offset, redo[i].value);
-	redo_log_set_last(pop, sec->redo, idx - 1);
-
-	redo_log_process(pop, sec->redo, idx);
 
 	heap_unlock_if_run(pop, m);
 }
@@ -232,9 +244,6 @@ pmalloc_construct_redo(PMEMobjpool *pop, uint64_t *off, size_t size,
 	void *arg), void *arg, uint64_t data_off, int mod_undo, struct redo_log *redo, size_t nentries)
 {
 	int err;
-
-	struct lane_section *lane;
-	lane_hold(pop, &lane, LANE_SECTION_ALLOCATOR);
 
 	size_t sizeh = size + sizeof (struct allocation_header);
 
@@ -277,10 +286,9 @@ pmalloc_construct_redo(PMEMobjpool *pop, uint64_t *off, size_t size,
 	 * allocation persistent.
 	 */
 	uint64_t real_size = b->unit_size * m.size_idx;
-	persist_alloc(pop, lane, m, real_size, off, constructor, arg, data_off, mod_undo, redo, nentries);
+	persist_alloc(pop, m, real_size, off, constructor, arg, data_off, mod_undo, redo, nentries);
 	err = 0;
 out:
-	lane_release(pop);
 
 	return err;
 }
@@ -395,20 +403,10 @@ pmalloc_usable_size(PMEMobjpool *pop, uint64_t off)
 		sizeof (struct allocation_header);
 }
 
-/*
- * pfree -- deallocates a memory block previously allocated by pmalloc
- *
- * A zero value is written persistently into the off variable.
- *
- * If successful function returns zero. Otherwise an error number is returned.
- */
 void
-pfree(PMEMobjpool *pop, uint64_t *off, uint64_t data_off)
+pfree_redo(PMEMobjpool *pop, uint64_t *off, uint64_t data_off, struct redo_log *redo, size_t nentries)
 {
 	struct allocation_header *alloc = alloc_get_header(pop, *off);
-
-	struct lane_section *lane;
-	lane_hold(pop, &lane, LANE_SECTION_ALLOCATOR);
 
 	struct bucket *b = heap_get_chunk_bucket(pop,
 		alloc->chunk_id, alloc->zone_id);
@@ -425,18 +423,35 @@ pfree(PMEMobjpool *pop, uint64_t *off, uint64_t data_off)
 	heap_lock_if_run(pop, m);
 
 	uint64_t op_result;
-	void *hdr;
+	uint64_t *hdr;
 	struct memory_block res = heap_free_block(pop, b, m, &hdr, &op_result);
 
-	struct allocator_lane_section *sec =
-		(struct allocator_lane_section *)lane->layout;
+	if (off != NULL) {
+		struct lane_section *lane;
+		lane_hold(pop, &lane, LANE_SECTION_ALLOCATOR);
 
-	redo_log_store(pop, sec->redo, ALLOC_OP_REDO_PTR_OFFSET,
-		pop_offset(pop, off), 0);
-	redo_log_store_last(pop, sec->redo, ALLOC_OP_REDO_HEADER,
-		pop_offset(pop, hdr), op_result);
+		struct allocator_lane_section *sec =
+			(struct allocator_lane_section *)lane->layout;
 
-	redo_log_process(pop, sec->redo, MAX_ALLOC_OP_REDO);
+		int idx = 0;
+		redo_log_store(pop, sec->redo, idx++,
+			pop_offset(pop, off), 0);
+		redo_log_store(pop, sec->redo, idx++,
+			pop_offset(pop, hdr), op_result);
+
+		for (size_t i = 0; i < nentries; ++i)
+			redo_log_store(pop, sec->redo, idx++, redo[i].offset, redo[i].value);
+
+		redo_log_set_last(pop, sec->redo, idx - 1);
+		redo_log_process(pop, sec->redo, idx);
+
+		lane_release(pop);
+	} else {
+		*hdr = op_result;
+		pop->persist(pop, hdr, sizeof (*hdr));
+		if (off != NULL)
+			*off = 0;
+	}
 
 	heap_unlock_if_run(pop, m);
 
@@ -447,8 +462,35 @@ pfree(PMEMobjpool *pop, uint64_t *off, uint64_t data_off)
 
 	if (b->type == BUCKET_RUN)
 		heap_degrade_run_if_empty(pop, b, res);
+}
 
-	lane_release(pop);
+/*
+ * pfree -- deallocates a memory block previously allocated by pmalloc
+ *
+ * A zero value is written persistently into the off variable.
+ *
+ * If successful function returns zero. Otherwise an error number is returned.
+ */
+void
+pfree(PMEMobjpool *pop, uint64_t *off, uint64_t data_off)
+{
+	pfree_redo(pop, off, data_off, NULL, 0);
+}
+
+uint64_t
+pmalloc_first(PMEMobjpool *pop)
+{
+
+	return 0;
+}
+
+uint64_t
+pmalloc_next(PMEMobjpool *pop, uint64_t off)
+{
+	struct allocation_header *alloc = alloc_get_header(pop, off);
+	//struct memory_block m = get_mblock_from_alloc(pop, b, alloc);
+
+	return 0;
 }
 
 /*

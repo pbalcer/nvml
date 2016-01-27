@@ -1148,8 +1148,9 @@ obj_alloc_construct(PMEMobjpool *pop, PMEMoid *oidp, size_t size,
 		return pmalloc_construct_redo(pop, &oidp->off, size + sizeof (struct oob_header), constructor_alloc_bytype, &carg, sizeof (struct oob_header), 1, &l, 1);
 	} else {
 		int ret = pmalloc_construct_redo(pop, oidp != NULL ? &oidp->off : NULL, size + sizeof (struct oob_header), constructor_alloc_bytype, &carg, sizeof (struct oob_header), 1, NULL, 0);
-		if (oidp != NULL)
+		if (oidp != NULL) {
 			oidp->pool_uuid_lo = pop->uuid_lo;
+		}
 
 		return ret;
 	}
@@ -1234,6 +1235,16 @@ obj_free(PMEMobjpool *pop, PMEMoid *oidp)
 	struct oob_header *pobj = OOB_HEADER_FROM_OID(pop, *oidp);
 
 	ASSERT(pobj->data.user_type < PMEMOBJ_NUM_OID_TYPES);
+
+	if (OBJ_PTR_IS_VALID(pop, oidp)) {
+		struct redo_log l = {OBJ_PTR_TO_OFF(pop, &oidp->pool_uuid_lo), 0};
+		return pfree_redo(pop, &oidp->off, sizeof (struct oob_header), &l, 1);
+	} else {
+		pfree(pop, oidp != NULL ? &oidp->off : NULL, sizeof (struct oob_header));
+		if (oidp != NULL) {
+			oidp->pool_uuid_lo = pop->uuid_lo;
+		}
+	}
 
 	void *lhead = &pop->store->bytype[pobj->data.user_type].head;
 	list_remove_free_oob(pop, lhead, oidp);
