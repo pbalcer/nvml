@@ -1803,7 +1803,8 @@ pmemobj_first(PMEMobjpool *pop, unsigned int type_num)
 
 	PMEMoid oid = {0, 0};
 
-	oid.off = pmalloc_first(pop) + OBJ_OOB_SIZE;
+	uint64_t off = pmalloc_first(pop);
+	oid.off = off ? off + OBJ_OOB_SIZE : 0;
 
 	while (!OID_IS_NULL(oid)) {
 		struct oob_header *pobj = OOB_HEADER_FROM_OID(pop, oid);

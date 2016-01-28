@@ -552,12 +552,12 @@ if (0) {
 	test_tx_api(pop);
 }
 
-	PMEMoid oid[4];
+	/*	PMEMoid oid[4];
 	pmemobj_alloc(pop, &oid[0], 100, 0, NULL, NULL);
 	pmemobj_alloc(pop, &oid[1], 100, 0, NULL, NULL);
 	pmemobj_alloc(pop, &oid[2], 100, 0, NULL, NULL);
 	pmemobj_alloc(pop, &oid[3], 300*1024, 0, NULL, NULL);
-	printf("alloc: %lu %lu %lu %lu\n", oid[0].off, oid[1].off, oid[2].off, oid[3].off);
+	printf("alloc: %lu %lu %lu %lu\n", oid[0].off, oid[1].off, oid[2].off, oid[3].off);*/
 	//pmemobj_free(&oid[1]);
 
 	PMEMoid oid_iter;
