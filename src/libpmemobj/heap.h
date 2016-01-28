@@ -35,7 +35,23 @@
  */
 
 #define	MAX_BUCKETS UINT8_MAX
-#define	RUN_UNIT_MAX 4U
+#define	RUN_UNIT_MAX 8U
+
+/*
+ * Every allocation has to be a multiple of a cacheline because we need to
+ * ensure proper alignment of every pmem structure.
+ */
+#define	ALLOC_BLOCK_SIZE _POBJ_CL_ALIGNMENT
+
+/*
+ * Converts size (in bytes) to number of allocation blocks.
+ */
+#define	SIZE_TO_ALLOC_BLOCKS(_s) (1 + (((_s) - 1) / ALLOC_BLOCK_SIZE))
+
+/*
+ * Converts size (in bytes) to bucket index.
+ */
+#define	SIZE_TO_BID(_h, _s) ((_h)->bucket_map[SIZE_TO_ALLOC_BLOCKS(_s)])
 
 enum heap_op {
 	HEAP_OP_ALLOC,
@@ -82,11 +98,11 @@ void heap_degrade_run_if_empty(PMEMobjpool *pop, struct bucket *b,
 struct memory_block heap_free_block(PMEMobjpool *pop, struct bucket *b,
 	struct memory_block m, void *hdr, uint64_t *op_result);
 
-
-typedef void (*object_callback)(PMEMoid oid, void *arg);
+typedef int (*object_callback)(uint64_t off, void *arg);
 
 void heap_foreach_object(PMEMobjpool *pop, object_callback cb, void *arg, struct memory_block start);
 
+size_t heap_get_chunk_block_size(PMEMobjpool *pop, struct memory_block m);
 
 #ifdef DEBUG
 int heap_block_is_allocated(PMEMobjpool *pop, struct memory_block m);

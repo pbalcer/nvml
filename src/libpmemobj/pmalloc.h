@@ -48,6 +48,8 @@ int pmalloc_construct_redo(PMEMobjpool *pop, uint64_t *off, size_t size,
 	void (*constructor)(PMEMobjpool *pop, void *ptr, size_t usable_size,
 	void *arg), void *arg, uint64_t data_off, int mod_undo, struct redo_log *redo, size_t nentries);
 
+uint64_t pmalloc_first(PMEMobjpool *pop);
+uint64_t pmalloc_next(PMEMobjpool *pop, uint64_t off);
 
 int prealloc(PMEMobjpool *pop, uint64_t *off, size_t size, uint64_t data_off);
 int prealloc_construct(PMEMobjpool *pop, uint64_t *off, size_t size,

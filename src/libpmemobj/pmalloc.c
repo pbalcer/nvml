@@ -97,18 +97,18 @@ pop_offset(PMEMobjpool *pop, void *ptr)
  * calc_block_offset -- (internal) calculates the block offset of allocation
  */
 static uint16_t
-calc_block_offset(PMEMobjpool *pop, struct bucket *b,
-	struct allocation_header *alloc)
+calc_block_offset(PMEMobjpool *pop, struct allocation_header *alloc,
+	size_t unit_size)
 {
 	uint16_t block_off = 0;
-	if (b->type == BUCKET_RUN) {
+	if (unit_size != CHUNKSIZE) {
 		struct memory_block m = {alloc->chunk_id, alloc->zone_id, 0, 0};
 		void *data = heap_get_block_data(pop, m);
 		uintptr_t diff = (uintptr_t)alloc - (uintptr_t)data;
 		ASSERT(diff <= RUNSIZE);
-		ASSERT((size_t)diff / b->unit_size <= UINT16_MAX);
-		ASSERT(diff % b->unit_size == 0);
-		block_off = (uint16_t)((size_t)diff / b->unit_size);
+		ASSERT((size_t)diff / unit_size <= UINT16_MAX);
+		ASSERT(diff % unit_size == 0);
+		block_off = (uint16_t)((size_t)diff / unit_size);
 	}
 
 	return block_off;
@@ -118,15 +118,18 @@ calc_block_offset(PMEMobjpool *pop, struct bucket *b,
  * get_mblock_from_alloc -- (internal) returns allocation memory block
  */
 static struct memory_block
-get_mblock_from_alloc(PMEMobjpool *pop, struct bucket *b,
-	struct allocation_header *alloc)
+get_mblock_from_alloc(PMEMobjpool *pop, struct allocation_header *alloc)
 {
 	struct memory_block mblock = {
 		alloc->chunk_id,
 		alloc->zone_id,
-		b->calc_units(b, alloc->size),
-		calc_block_offset(pop, b, alloc)
+		0,
+		0
 	};
+
+	uint64_t unit_size = heap_get_chunk_block_size(pop, mblock);
+	mblock.block_off = calc_block_offset(pop, alloc, unit_size);
+	mblock.size_idx = CALC_SIZE_IDX(unit_size, alloc->size);
 
 	return mblock;
 }
@@ -337,7 +340,7 @@ prealloc_construct(PMEMobjpool *pop, uint64_t *off, size_t size,
 	uint32_t new_size_idx = b->calc_units(b, sizeh);
 	uint64_t real_size = new_size_idx * b->unit_size;
 
-	struct memory_block cnt = get_mblock_from_alloc(pop, b, alloc);
+	struct memory_block cnt = get_mblock_from_alloc(pop, alloc);
 
 	heap_lock_if_run(pop, cnt);
 
@@ -350,8 +353,7 @@ prealloc_construct(PMEMobjpool *pop, uint64_t *off, size_t size,
 		goto out;
 	}
 
-	if ((err = heap_get_exact_block(pop, b, &next,
-		add_size_idx)) != 0)
+	if ((err = heap_get_exact_block(pop, b, &next, add_size_idx)) != 0)
 		goto out;
 
 	struct memory_block *blocks[2] = {&cnt, &next};
@@ -406,12 +408,12 @@ pmalloc_usable_size(PMEMobjpool *pop, uint64_t off)
 void
 pfree_redo(PMEMobjpool *pop, uint64_t *off, uint64_t data_off, struct redo_log *redo, size_t nentries)
 {
-	struct allocation_header *alloc = alloc_get_header(pop, *off);
+	struct allocation_header *alloc = alloc_get_header(pop, *off - data_off);
 
 	struct bucket *b = heap_get_chunk_bucket(pop,
 		alloc->chunk_id, alloc->zone_id);
 
-	struct memory_block m = get_mblock_from_alloc(pop, b, alloc);
+	struct memory_block m = get_mblock_from_alloc(pop, alloc);
 
 #ifdef DEBUG
 	if (!heap_block_is_allocated(pop, m)) {
@@ -426,7 +428,7 @@ pfree_redo(PMEMobjpool *pop, uint64_t *off, uint64_t data_off, struct redo_log *
 	uint64_t *hdr;
 	struct memory_block res = heap_free_block(pop, b, m, &hdr, &op_result);
 
-	if (off != NULL) {
+	if (OBJ_PTR_IS_VALID(pop, off)) {
 		struct lane_section *lane;
 		lane_hold(pop, &lane, LANE_SECTION_ALLOCATOR);
 
@@ -458,10 +460,13 @@ pfree_redo(PMEMobjpool *pop, uint64_t *off, uint64_t data_off, struct redo_log *
 	VALGRIND_DO_MEMPOOL_FREE(pop,
 			(char *)alloc + sizeof (*alloc) + data_off);
 
-	CNT_OP(b, insert, pop, res);
+	/* we might have been operating on inactive run */
+	if (b != NULL) {
+		CNT_OP(b, insert, pop, res);
 
-	if (b->type == BUCKET_RUN)
-		heap_degrade_run_if_empty(pop, b, res);
+		if (b->type == BUCKET_RUN)
+			heap_degrade_run_if_empty(pop, b, res);
+	}
 }
 
 /*
@@ -477,20 +482,51 @@ pfree(PMEMobjpool *pop, uint64_t *off, uint64_t data_off)
 	pfree_redo(pop, off, data_off, NULL, 0);
 }
 
+int
+pmalloc_search_cb(uint64_t off, void *arg)
+{
+	uint64_t *prev = arg;
+
+	if (*prev == UINT64_MAX) {
+		*prev = off;
+
+		return 1;
+	}
+
+	if (off == *prev)
+		*prev = UINT64_MAX;
+
+	return 0;
+}
+
 uint64_t
 pmalloc_first(PMEMobjpool *pop)
 {
+	uint64_t off_search = UINT64_MAX;
+	struct memory_block m = {0, 0, 0, 0};
 
-	return 0;
+	heap_foreach_object(pop, pmalloc_search_cb, &off_search, m);
+
+	if (off_search == UINT64_MAX)
+		return 0;
+
+	return off_search + sizeof (struct allocation_header);
 }
 
 uint64_t
 pmalloc_next(PMEMobjpool *pop, uint64_t off)
 {
 	struct allocation_header *alloc = alloc_get_header(pop, off);
-	//struct memory_block m = get_mblock_from_alloc(pop, b, alloc);
+	struct memory_block m = get_mblock_from_alloc(pop, alloc);
 
-	return 0;
+	uint64_t off_search = off - sizeof (struct allocation_header);
+
+	heap_foreach_object(pop, pmalloc_search_cb, &off_search, m);
+
+	if (off_search == (off - sizeof (struct allocation_header)) || off_search == 0 || off_search == UINT64_MAX)
+		return 0;
+
+	return off_search + sizeof (struct allocation_header);
 }
 
 /*

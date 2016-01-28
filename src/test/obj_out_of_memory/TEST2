@@ -1,6 +1,6 @@
 #!/bin/bash -e
 #
-# Copyright (c) 2014-2015, Intel Corporation
+# Copyright (c) 2015, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -31,21 +31,23 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 
-#
-# src/test/vmem_realloc_inplace/TEST0 -- unit test for vmem_realloc
-#
-export UNITTEST_NAME=vmem_realloc_inplace/TEST0
-export UNITTEST_NUM=0
+export UNITTEST_NAME=obj_out_of_memory/TEST2
+export UNITTEST_NUM=2
 
 # standard unit test setup
 . ../unittest/unittest.sh
 
-require_fs_type local
+require_test_type long
 
 setup
 
-expect_normal_exit ./vmem_realloc_inplace$EXESUFFIX
+export PMEM_IS_PMEM_FORCE=1
+export PMEMOBJ_LOG_LEVEL=1
 
-check
+create_poolset $DIR/testset1 20G:$DIR/testfile1
+
+# allocate 64 kilobyte blocks so that runs are used
+expect_normal_exit\
+	./obj_out_of_memory$EXESUFFIX 32768 $DIR/testset1
 
 pass

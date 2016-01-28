@@ -1245,9 +1245,6 @@ obj_free(PMEMobjpool *pop, PMEMoid *oidp)
 			oidp->pool_uuid_lo = pop->uuid_lo;
 		}
 	}
-
-	void *lhead = &pop->store->bytype[pobj->data.user_type].head;
-	list_remove_free_oob(pop, lhead, oidp);
 }
 
 /*
@@ -1802,17 +1799,24 @@ pmemobj_root(PMEMobjpool *pop, size_t size)
 PMEMoid
 pmemobj_first(PMEMobjpool *pop, unsigned int type_num)
 {
-	LOG(3, "pop %p type_num %u", pop, type_num);
+	LOG(3, "pop %p", pop);
 
-	if (type_num >= PMEMOBJ_NUM_OID_TYPES) {
-		errno = EINVAL;
-		ERR("!pmemobj_first");
-		LOG(2, "type_num has to be in range [0, %i]",
-		    PMEMOBJ_NUM_OID_TYPES - 1);
-		return OID_NULL;
+	PMEMoid oid = {0, 0};
+
+	oid.off = pmalloc_first(pop) + OBJ_OOB_SIZE;
+
+	while (!OID_IS_NULL(oid)) {
+		struct oob_header *pobj = OOB_HEADER_FROM_OID(pop, oid);
+		type_num_t user_type = pobj->data.user_type;
+		if (user_type == type_num)
+			break;
+		uint64_t off = pmalloc_next(pop, oid.off - OBJ_OOB_SIZE);
+		oid.off = off ? off + OBJ_OOB_SIZE : 0;
 	}
 
-	return pop->store->bytype[type_num].head.pe_first;
+	oid.pool_uuid_lo = pop->uuid_lo;
+
+	return oid;
 }
 
 /*
@@ -1832,17 +1836,28 @@ pmemobj_next(PMEMoid oid)
 	ASSERT(OBJ_OID_IS_VALID(pop, oid));
 
 	struct oob_header *pobj = OOB_HEADER_FROM_OID(pop, oid);
-	type_num_t user_type = pobj->data.user_type;
+	type_num_t type_num = pobj->data.user_type;
 
-	ASSERT(user_type < PMEMOBJ_NUM_OID_TYPES);
+	ASSERT(type_num < PMEMOBJ_NUM_OID_TYPES);
 
-	if (pobj->oob.pe_next.off !=
-			pop->store->bytype[user_type].head.pe_first.off)
-		return pobj->oob.pe_next;
-	else
-		return OID_NULL;
+	PMEMoid ret = {0, 0};
+	ret.off = oid.off;
+
+	for (;;) {
+		uint64_t off = pmalloc_next(pop, ret.off - OBJ_OOB_SIZE);
+		ret.off = off ? off + OBJ_OOB_SIZE : 0;
+		if (OID_IS_NULL(ret))
+			break;
+
+		struct oob_header *pobj = OOB_HEADER_FROM_OID(pop, ret);
+		type_num_t user_type = pobj->data.user_type;
+		if (user_type == type_num)
+			break;
+	}
+	ret.pool_uuid_lo = pop->uuid_lo;
+
+	return ret;
 }
-
 
 /*
  * pmemobj_list_insert -- adds object to a list
@@ -2008,5 +2023,5 @@ _pobj_debug_notice(const char *api_name, const char *file, int line)
 void
 pmemobj_foreach(PMEMobjpool *pop, void (*callback)(PMEMoid oid, void *arg), void *arg)
 {
-	heap_foreach_object(pop, callback, arg);
+	//heap_foreach_object(pop, callback, arg);
 }
