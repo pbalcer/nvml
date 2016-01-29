@@ -39,17 +39,14 @@
 #include "redo.h"
 #include "pmalloc.h"
 #include "unittest.h"
-#include <assert.h>
 
 #define	THREADS 1
 #define	OPS_PER_THREAD 1000000
-#define	ALLOC_SIZE 100
-#define	REALLOC_SIZE (ALLOC_SIZE * 3)
+#define	ALLOC_SIZE 64
 #define	FRAGMENTATION 3
-#define	MIX_RERUNS 2
 
 struct root {
-	uint64_t offs[THREADS][OPS_PER_THREAD];
+	PMEMoid offs[THREADS][OPS_PER_THREAD];
 };
 
 struct worker_args {
@@ -64,15 +61,14 @@ alloc_worker(void *arg)
 	struct worker_args *a = arg;
 
 	for (int i = 0; i < OPS_PER_THREAD; ++i) {
-		//void *ptr = malloc(ALLOC_SIZE);
-		//assert(ptr != NULL);
-		pmalloc(a->pop, NULL, ALLOC_SIZE, 0);
+		pmemobj_alloc(a->pop, &a->r->offs[a->idx][i], 64, 0, NULL, NULL);
+		//pmalloc(a->pop, &a->r->offs[a->idx][i], ALLOC_SIZE, 0);
 		//ASSERTne(a->r->offs[a->idx][i], 0);
 	}
 
 	return NULL;
 }
-
+#if 0
 static void *
 realloc_worker(void *arg)
 {
@@ -155,7 +151,7 @@ alloc_free_worker(void *arg)
 
 	return NULL;
 }
-
+#endif
 static void
 run_worker(void *(worker_func)(void *arg), struct worker_args args[])
 {
@@ -204,11 +200,7 @@ main(int argc, char *argv[])
 	}
 
 	run_worker(alloc_worker, args);
-	if (0){run_worker(realloc_worker, args);
-	run_worker(free_worker, args);
-	run_worker(mix_worker, args);
-	run_worker(tx_worker, args);
-	run_worker(alloc_free_worker, args);}
+
 
 	DONE(NULL);
 }

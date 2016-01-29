@@ -309,6 +309,74 @@ prealloc(PMEMobjpool *pop, uint64_t *off, size_t size, uint64_t data_off)
 	return prealloc_construct(pop, off, size, NULL, NULL, data_off);
 }
 
+int
+prealloc_free_alloc(PMEMobjpool *pop, uint64_t *off, size_t size,
+	void (*constructor)(PMEMobjpool *pop, void *ptr,
+	size_t usable_size, void *arg), void *arg, uint64_t data_off)
+{
+	if (prealloc_construct(pop, off, size, constructor, arg, data_off) == 0)
+		return 0;
+
+	struct allocation_header *alloc = alloc_get_header(pop, *off - data_off);
+
+	struct bucket *b = heap_get_chunk_bucket(pop,
+		alloc->chunk_id, alloc->zone_id);
+
+	struct memory_block m = get_mblock_from_alloc(pop, alloc);
+
+#ifdef DEBUG
+	if (!heap_block_is_allocated(pop, m)) {
+		ERR("Double free or heap corruption");
+		ASSERT(0);
+	}
+#endif /* DEBUG */
+
+	heap_lock_if_run(pop, m);
+
+	uint64_t op_result;
+	uint64_t *hdr;
+	struct memory_block res = heap_free_block(pop, b, m, &hdr, &op_result);
+
+	if (OBJ_PTR_IS_VALID(pop, off)) {
+		struct lane_section *lane;
+		lane_hold(pop, &lane, LANE_SECTION_ALLOCATOR);
+
+		struct allocator_lane_section *sec =
+			(struct allocator_lane_section *)lane->layout;
+
+		int idx = 0;
+		redo_log_store(pop, sec->redo, idx++,
+			pop_offset(pop, off), 0);
+		redo_log_store(pop, sec->redo, idx++,
+			pop_offset(pop, hdr), op_result);
+
+		redo_log_set_last(pop, sec->redo, idx - 1);
+		redo_log_process(pop, sec->redo, idx);
+
+		lane_release(pop);
+	} else {
+		*hdr = op_result;
+		pop->persist(pop, hdr, sizeof (*hdr));
+		if (off != NULL)
+			*off = 0;
+	}
+
+	heap_unlock_if_run(pop, m);
+
+	VALGRIND_DO_MEMPOOL_FREE(pop,
+			(char *)alloc + sizeof (*alloc) + data_off);
+
+	/* we might have been operating on inactive run */
+	if (b != NULL) {
+		CNT_OP(b, insert, pop, res);
+
+		if (b->type == BUCKET_RUN)
+			heap_degrade_run_if_empty(pop, b, res);
+	}
+
+	return 0;
+}
+
 /*
  * prealloc_construct -- resizes an existing memory block with a constructor
  *
@@ -482,7 +550,7 @@ pfree(PMEMobjpool *pop, uint64_t *off, uint64_t data_off)
 	pfree_redo(pop, off, data_off, NULL, 0);
 }
 
-int
+static int
 pmalloc_search_cb(uint64_t off, void *arg)
 {
 	uint64_t *prev = arg;
