@@ -383,8 +383,16 @@ base_op(PMEMobjpool *pop, uint64_t *dest_off, uint64_t off, size_t size,
 		if (size < USABLE_SIZE(alloc)) {
 			uint64_t unit_size = heap_get_chunk_block_size(pop, m);
 			uint32_t shrink_to = CALC_SIZE_IDX(unit_size, sizeh);
+
 			if (shrink_to == m.size_idx)
 				return 0; /* noop */
+
+			struct bucket *nb = heap_get_best_bucket(pop, sizeh);
+
+			if (nb->unit_size != unit_size) {
+				/* reserve, free, persist*/
+				return 0;
+			}
 
 			m.size_idx -= shrink_to;
 			m.block_off += shrink_to;
@@ -394,8 +402,26 @@ base_op(PMEMobjpool *pop, uint64_t *dest_off, uint64_t off, size_t size,
 		if (size > USABLE_SIZE(alloc)) {
 			uint64_t unit_size = heap_get_chunk_block_size(pop, m);
 			uint32_t grow_to = CALC_SIZE_IDX(unit_size, sizeh);
+			b = heap_get_best_bucket(pop, sizeh);
+			if (b->type == BUCKET_RUN) {
+				struct bucket_run *r = (struct bucket_run *)b;
+				if (grow_to > r->unit_max) {
+					/* reserve, free, persist*/
+					return 0;
+				}
+			} else {
+				if (grow_to > MAX_CHUNK) {
+					/* reserve, free, persist*/
+					return 0;
+				}
+			}
 		}
+
+		return 0;
 	}
+
+	/* reserve persist */
+
 
 	return 0;
 }
