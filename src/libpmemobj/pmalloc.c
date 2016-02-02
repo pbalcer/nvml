@@ -56,6 +56,9 @@ enum alloc_op_redo {
 	MAX_ALLOC_OP_REDO
 };
 
+#define USABLE_SIZE(_a)\
+((_a)->size - sizeof (struct allocation_header))
+
 /*
  * alloc_write_header -- (internal) creates allocation header
  */
@@ -296,6 +299,107 @@ out:
 	return err;
 }
 
+int
+base_free_op(PMEMobjpool *pop, struct bucket *b, uint64_t *dest_off, uint64_t data_off, struct memory_block m, size_t dest_size)
+{
+	#ifdef DEBUG
+		if (!heap_block_is_allocated(pop, m)) {
+			ERR("Double free or heap corruption");
+			ASSERT(0);
+		}
+	#endif /* DEBUG */
+
+	heap_lock_if_run(pop, m);
+	uint64_t op_result;
+	uint64_t *hdr;
+	struct memory_block res = heap_free_block(pop, b, m, &hdr, &op_result);
+
+	if (OBJ_PTR_IS_VALID(pop, dest_off)) {
+		struct lane_section *lane;
+		lane_hold(pop, &lane, LANE_SECTION_ALLOCATOR);
+
+		struct allocator_lane_section *sec =
+			(struct allocator_lane_section *)lane->layout;
+
+		int idx = 0;
+		redo_log_store(pop, sec->redo, idx++,
+			pop_offset(pop, dest_off), 0);
+		redo_log_store(pop, sec->redo, idx++,
+			pop_offset(pop, hdr), op_result);
+
+		redo_log_set_last(pop, sec->redo, idx - 1);
+		redo_log_process(pop, sec->redo, idx);
+
+		lane_release(pop);
+	} else {
+		*hdr = op_result;
+		pop->persist(pop, hdr, sizeof (*hdr));
+		if (dest_off != NULL)
+			*dest_off = 0;
+	}
+
+	heap_unlock_if_run(pop, m);
+
+	VALGRIND_DO_MEMPOOL_FREE(pop,
+			heap_get_block_data(pop, m) +
+			sizeof (struct allocation_header) + data_off);
+
+	/* we might have been operating on inactive run */
+	if (b != NULL) {
+		CNT_OP(b, insert, pop, res);
+
+		if (b->type == BUCKET_RUN)
+			heap_degrade_run_if_empty(pop, b, res);
+	}
+
+	return 0;
+}
+
+int
+base_op(PMEMobjpool *pop, uint64_t *dest_off, uint64_t off, size_t size,
+	void (*constructor)(PMEMobjpool *pop, void *ptr, size_t usable_size, void *arg),
+	void *arg, uint64_t data_off, struct redo_log *redo, size_t nentries)
+{
+	struct bucket *b = NULL;
+	struct allocation_header *alloc = NULL;
+	struct memory_block m = {0, 0, 0, 0};
+
+	if (off != 0) {
+		alloc = alloc_get_header(pop, off - data_off);
+		b = heap_get_chunk_bucket(pop, alloc->chunk_id, alloc->zone_id);
+	}
+
+	size_t sizeh = size + sizeof (struct allocation_header);
+
+	if (alloc != NULL) {
+		m = get_mblock_from_alloc(pop, alloc);
+
+		if (size == 0)
+			return base_free_op(pop, b, dest_off, data_off, m, 0);
+
+		if (size == USABLE_SIZE(alloc))
+			return 0;
+
+		if (size < USABLE_SIZE(alloc)) {
+			uint64_t unit_size = heap_get_chunk_block_size(pop, m);
+			uint32_t shrink_to = CALC_SIZE_IDX(unit_size, sizeh);
+			if (shrink_to == m.size_idx)
+				return 0; /* noop */
+
+			m.size_idx -= shrink_to;
+			m.block_off += shrink_to;
+			base_free_op(pop, b, dest_off, data_off, m, sizeh);
+		}
+
+		if (size > USABLE_SIZE(alloc)) {
+			uint64_t unit_size = heap_get_chunk_block_size(pop, m);
+			uint32_t grow_to = CALC_SIZE_IDX(unit_size, sizeh);
+		}
+	}
+
+	return 0;
+}
+
 /*
  * prealloc -- resizes in-place a previously allocated memory block
  *
@@ -469,8 +573,7 @@ out:
 size_t
 pmalloc_usable_size(PMEMobjpool *pop, uint64_t off)
 {
-	return alloc_get_header(pop, off)->size -
-		sizeof (struct allocation_header);
+	return USABLE_SIZE(alloc_get_header(pop, off));
 }
 
 void
