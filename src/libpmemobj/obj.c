@@ -1143,17 +1143,9 @@ obj_alloc_construct(PMEMobjpool *pop, PMEMoid *oidp, size_t size,
 	carg.constructor = constructor;
 	carg.arg = arg;
 
-	if (OBJ_PTR_IS_VALID(pop, oidp)) {
-		struct redo_log l = {OBJ_PTR_TO_OFF(pop, &oidp->pool_uuid_lo), pop->uuid_lo};
-		return pmalloc_construct_redo(pop, &oidp->off, size + sizeof (struct oob_header), constructor_alloc_bytype, &carg, sizeof (struct oob_header), 1, &l, 1);
-	} else {
-		int ret = pmalloc_construct_redo(pop, oidp != NULL ? &oidp->off : NULL, size + sizeof (struct oob_header), constructor_alloc_bytype, &carg, sizeof (struct oob_header), 1, NULL, 0);
-		if (oidp != NULL) {
-			oidp->pool_uuid_lo = pop->uuid_lo;
-		}
+	struct operation_entry l = {&oidp->pool_uuid_lo, pop->uuid_lo};
 
-		return ret;
-	}
+	return alloc_operation(pop, 0, oidp != NULL ? &oidp->off : NULL, size + sizeof (struct oob_header), constructor_alloc_bytype, &carg, oidp != NULL ? &l : NULL, oidp != NULL ? 1 : 0);
 }
 
 /*
@@ -1235,16 +1227,10 @@ obj_free(PMEMobjpool *pop, PMEMoid *oidp)
 	struct oob_header *pobj = OOB_HEADER_FROM_OID(pop, *oidp);
 
 	ASSERT(pobj->data.user_type < PMEMOBJ_NUM_OID_TYPES);
+	ASSERT(oidp != NULL);
 
-	if (OBJ_PTR_IS_VALID(pop, oidp)) {
-		struct redo_log l = {OBJ_PTR_TO_OFF(pop, &oidp->pool_uuid_lo), 0};
-		return pfree_redo(pop, &oidp->off, sizeof (struct oob_header), &l, 1);
-	} else {
-		pfree(pop, oidp != NULL ? &oidp->off : NULL, sizeof (struct oob_header));
-		if (oidp != NULL) {
-			oidp->pool_uuid_lo = pop->uuid_lo;
-		}
-	}
+	struct operation_entry l = {&oidp->pool_uuid_lo, 0};
+	alloc_operation(pop, oidp->off, &oidp->off, 0, NULL, NULL, &l, 1);
 }
 
 /*
@@ -1262,8 +1248,8 @@ constructor_realloc(PMEMobjpool *pop, void *ptr, size_t usable_size, void *arg)
 	struct oob_header *pobj = OOB_HEADER_FROM_PTR(ptr);
 
 	if (ptr != carg->ptr) {
-		size_t cpy_size = carg->new_size > carg->old_size ?
-			carg->old_size : carg->new_size;
+		//size_t cpy_size = carg->new_size > carg->old_size ?
+		//	carg->old_size : carg->new_size;
 
 		pobj->data.internal_type = TYPE_ALLOCATED;
 		pobj->data.user_type = carg->user_type;
@@ -1273,7 +1259,7 @@ constructor_realloc(PMEMobjpool *pop, void *ptr, size_t usable_size, void *arg)
 			sizeof (pobj->data.internal_type) +
 			sizeof (pobj->data.user_type));
 
-		pop->memcpy_persist(pop, ptr, carg->ptr, cpy_size);
+		//pop->memcpy_persist(pop, ptr, carg->ptr, cpy_size);
 	}
 
 	if (!carg->zero_init)
@@ -1292,7 +1278,7 @@ constructor_realloc(PMEMobjpool *pop, void *ptr, size_t usable_size, void *arg)
  *                          existing objects
  */
 static int
-obj_realloc_common(PMEMobjpool *pop, struct object_store *store,
+obj_realloc_common(PMEMobjpool *pop,
 	PMEMoid *oidp, size_t size, type_num_t type_num, int zero_init)
 {
 
@@ -1318,6 +1304,13 @@ obj_realloc_common(PMEMobjpool *pop, struct object_store *store,
 		return 0;
 	}
 
+	struct oob_header *pobj = OOB_HEADER_FROM_OID(pop, *oidp);
+	type_num_t user_type_old = pobj->data.user_type;
+
+	/* callers should have checked this */
+	ASSERT(type_num < PMEMOBJ_NUM_OID_TYPES);
+	ASSERT(user_type_old < PMEMOBJ_NUM_OID_TYPES);
+
 	struct carg_realloc carg;
 	carg.ptr = OBJ_OFF_TO_PTR(pop, oidp->off);
 	carg.new_size = size;
@@ -1327,61 +1320,17 @@ obj_realloc_common(PMEMobjpool *pop, struct object_store *store,
 	carg.arg = NULL;
 	carg.zero_init = zero_init;
 
-	struct oob_header *pobj = OOB_HEADER_FROM_OID(pop, *oidp);
-	type_num_t user_type_old = pobj->data.user_type;
-
-	/* callers should have checked this */
-	ASSERT(type_num < PMEMOBJ_NUM_OID_TYPES);
-	ASSERT(user_type_old < PMEMOBJ_NUM_OID_TYPES);
-
-	struct list_head *lhead_old = &store->bytype[user_type_old].head;
+	int ret;
 	if (type_num == user_type_old) {
-		int ret = list_realloc_oob(pop, lhead_old, size,
-				constructor_realloc, &carg, 0, 0, oidp);
-		if (ret)
-			LOG(2, "list_realloc failed");
-
-		/* oidp could be different, so we need to get the ptr again */
-		VALGRIND_DO_MAKE_MEM_NOACCESS(pop,
-			&OOB_HEADER_FROM_OID(pop, *oidp)->data.padding,
-			sizeof (OOB_HEADER_FROM_OID(pop, *oidp)->data.padding));
-
-		return ret;
+		ret = alloc_operation(pop, oidp->off, &oidp->off, size, constructor_realloc, &carg, NULL, 0);
 	} else {
-		struct list_head *lhead_new = &store->bytype[type_num].head;
-
-		/*
-		 * Header padding doubles as a red zone to check for header
-		 * overwrites. Disable it temporarily so we can modify the type
-		 * number.
-		 */
-		VALGRIND_DO_MAKE_MEM_DEFINED(pop,
-			&OOB_HEADER_FROM_OID(pop, *oidp)->data.padding,
-			sizeof (OOB_HEADER_FROM_OID(pop, *oidp)->data.padding));
-
-		/*
-		 * Redo log updates 8 byte entries, so we have to prepare
-		 * full 8-byte value even if we want to update smaller field
-		 * (here: user_type).
-		 */
 		struct oob_header_data d = pobj->data;
 		d.user_type = type_num;
-
-		uint64_t data_offset = OOB_OFFSET_OF(*oidp, data);
-
-		int ret = list_realloc_move_oob(pop, lhead_old, lhead_new,
-				size, constructor_realloc, &carg,
-				data_offset, *((uint64_t *)&d), oidp);
-		if (ret)
-			LOG(2, "list_realloc_move failed");
-
-		/* oidp could be different, so we need to get the ptr again */
-		VALGRIND_DO_MAKE_MEM_NOACCESS(pop,
-			&OOB_HEADER_FROM_OID(pop, *oidp)->data.padding,
-			sizeof (OOB_HEADER_FROM_OID(pop, *oidp)->data.padding));
-
-		return ret;
+		struct operation_entry entry = {(uint64_t *)&pobj->data, *((uint64_t *)&d)};
+		ret = alloc_operation(pop, oidp->off, &oidp->off, size, constructor_realloc, &carg, &entry, 1);
 	}
+
+	return ret;
 }
 
 /*
@@ -1437,8 +1386,7 @@ pmemobj_realloc(PMEMobjpool *pop, PMEMoid *oidp, size_t size,
 		return -1;
 	}
 
-	return obj_realloc_common(pop, pop->store, oidp, size,
-			(type_num_t)type_num, 0);
+	return obj_realloc_common(pop, oidp, size, (type_num_t)type_num, 0);
 }
 
 /*
@@ -1463,8 +1411,7 @@ pmemobj_zrealloc(PMEMobjpool *pop, PMEMoid *oidp, size_t size,
 		return -1;
 	}
 
-	return obj_realloc_common(pop, pop->store, oidp, size,
-			(type_num_t)type_num, 1);
+	return obj_realloc_common(pop, oidp, size, (type_num_t)type_num, 1);
 }
 
 /* arguments for constructor_strdup */
@@ -1726,8 +1673,8 @@ obj_realloc_root(PMEMobjpool *pop, struct object_store *store, size_t size,
 	carg.zero_init = 1;
 	carg.arg = arg;
 
-	return list_realloc_oob(pop, lhead, size, constructor_zrealloc_root,
-			&carg, size_offset, size, &lhead->pe_first);
+	return 0;//list_realloc_oob(pop, lhead, size, constructor_zrealloc_root,
+		//	&carg, size_offset, size, &lhead->pe_first);
 }
 
 /*
@@ -1811,7 +1758,7 @@ pmemobj_first(PMEMobjpool *pop, unsigned int type_num)
 		type_num_t user_type = pobj->data.user_type;
 		if (user_type == type_num)
 			break;
-		uint64_t off = pmalloc_next(pop, oid.off - OBJ_OOB_SIZE);
+		uint64_t off = pmalloc_next(pop, oid.off);
 		oid.off = off ? off + OBJ_OOB_SIZE : 0;
 	}
 
@@ -1845,7 +1792,7 @@ pmemobj_next(PMEMoid oid)
 	ret.off = oid.off;
 
 	for (;;) {
-		uint64_t off = pmalloc_next(pop, ret.off - OBJ_OOB_SIZE);
+		uint64_t off = pmalloc_next(pop, ret.off);
 		ret.off = off ? off + OBJ_OOB_SIZE : 0;
 		if (OID_IS_NULL(ret))
 			break;

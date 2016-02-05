@@ -160,6 +160,10 @@ private:
 	persistent_ptr<pmem_entry> tail;
 };
 
+struct foo {
+	int bar;
+};
+
 int
 main(int argc, char *argv[])
 {
@@ -190,6 +194,21 @@ main(int argc, char *argv[])
 	}
 
 	persistent_ptr<pmem_queue> q = pmemobj_root(pop, sizeof (pmem_queue));
+
+	std::shared_ptr<int> a0(new int(5));
+	std::shared_ptr<int> a1(new int(5));
+	std::shared_ptr<int> a2(a0);
+
+	if (a0 == a1) {
+		printf("a0 == a1\n");
+	} else {
+		printf("a0 != a1 %p\n", a0.get());
+	}
+	if (a0 == a2) {
+		printf("a0 == a2\n");
+	} else {
+		printf("a0 != a2\n");
+	}
 	switch (op) {
 		case QUEUE_PUSH:
 			q->push(pop, atoll(argv[3]));
