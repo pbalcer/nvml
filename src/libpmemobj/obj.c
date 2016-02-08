@@ -504,17 +504,8 @@ pmemobj_descr_create(PMEMobjpool *pop, const char *layout, size_t poolsize)
 	pmem_msync(lanes_layout, pop->nlanes *
 		sizeof (struct lane_layout));
 
-	/* initialization of the obj_store */
-	pop->obj_store_offset = pop->lanes_offset +
+	pop->heap_offset = pop->lanes_offset +
 		pop->nlanes * sizeof (struct lane_layout);
-	pop->obj_store_size = (PMEMOBJ_NUM_OID_TYPES + 1) *
-		sizeof (struct object_store_item);
-		/* + 1 - for root object */
-	void *store = (void *)((uintptr_t)pop + pop->obj_store_offset);
-	memset(store, 0, pop->obj_store_size);
-	pmem_msync(store, pop->obj_store_size);
-
-	pop->heap_offset = pop->obj_store_offset + pop->obj_store_size;
 	pop->heap_offset = (pop->heap_offset + Pagesize - 1) & ~(Pagesize - 1);
 	pop->heap_size = poolsize - pop->heap_offset;
 
@@ -655,8 +646,6 @@ pmemobj_runtime_init(PMEMobjpool *pop, int rdonly, int boot)
 	pop->lanes = NULL;
 
 	pop->uuid_lo = pmemobj_get_uuid_lo(pop);
-	pop->store = (struct object_store *)
-			((uintptr_t)pop + pop->obj_store_offset);
 
 	if (boot) {
 		if ((errno = pmemobj_boot(pop)) != 0)
@@ -1634,38 +1623,36 @@ constructor_alloc_root(PMEMobjpool *pop, void *ptr,
  * obj_alloc_root -- (internal) allocate root object
  */
 static int
-obj_alloc_root(PMEMobjpool *pop, struct object_store *store, size_t size,
+obj_alloc_root(PMEMobjpool *pop, size_t size,
 	void (*constructor)(PMEMobjpool *pop, void *ptr, void *arg), void *arg)
 {
-	LOG(3, "pop %p store %p size %zu", pop, store, size);
+	LOG(3, "pop %p size %zu", pop, size);
 
-	struct list_head *lhead = &store->root.head;
+	//struct list_head *lhead = &store->root.head;
 	struct carg_root carg;
 
 	carg.size = size;
 	carg.constructor = constructor;
 	carg.arg = arg;
 
-	return list_insert_new_oob(pop, lhead, size, constructor_alloc_root,
-			&carg, NULL);
+	return pmalloc_construct(pop, &pop->obj_root, size + OBJ_OOB_SIZE, constructor_alloc_root, &carg);
 }
 
 /*
  * obj_realloc_root -- (internal) reallocate root object
  */
 static int
-obj_realloc_root(PMEMobjpool *pop, struct object_store *store, size_t size,
+obj_realloc_root(PMEMobjpool *pop, size_t size,
 	size_t old_size,
 	void (*constructor)(PMEMobjpool *pop, void *ptr, void *arg), void *arg)
 {
-	LOG(3, "pop %p store %p size %zu old_size %zu",
-		pop, store, size, old_size);
+	LOG(3, "pop %p size %zu old_size %zu", pop, size, old_size);
 
-	struct list_head *lhead = &store->root.head;
-	uint64_t size_offset = OOB_OFFSET_OF(lhead->pe_first, size);
+	struct oob_header *hdr = OBJ_OFF_TO_PTR(pop, pop->obj_root);
+
 	struct carg_realloc carg;
 
-	carg.ptr = OBJ_OFF_TO_PTR(pop, lhead->pe_first.off);
+	carg.ptr = OBJ_OFF_TO_PTR(pop, pop->obj_root);
 	carg.old_size = old_size;
 	carg.new_size = size;
 	carg.user_type = POBJ_ROOT_TYPE_NUM;
@@ -1673,8 +1660,8 @@ obj_realloc_root(PMEMobjpool *pop, struct object_store *store, size_t size,
 	carg.zero_init = 1;
 	carg.arg = arg;
 
-	return 0;//list_realloc_oob(pop, lhead, size, constructor_zrealloc_root,
-		//	&carg, size_offset, size, &lhead->pe_first);
+	struct operation_entry e = {&hdr->size, size};
+	return alloc_operation(pop, pop->obj_root, &pop->obj_root, size + OBJ_OOB_SIZE, constructor_zrealloc_root, &carg, &e, 1);
 }
 
 /*
@@ -1685,9 +1672,8 @@ pmemobj_root_size(PMEMobjpool *pop)
 {
 	LOG(3, "pop %p", pop);
 
-	if (pop->store->root.head.pe_first.off) {
-		struct oob_header *ro = OOB_HEADER_FROM_OID(pop,
-						pop->store->root.head.pe_first);
+	if (pop->obj_root) {
+		struct oob_header *ro = OBJ_OFF_TO_PTR(pop, pop->obj_root);
 		return ro->size;
 	} else
 		return 0;
@@ -1712,19 +1698,21 @@ PMEMoid pmemobj_root_construct(PMEMobjpool *pop, size_t size,
 
 	pmemobj_mutex_lock_nofail(pop, &pop->rootlock);
 
-	if (pop->store->root.head.pe_first.off == 0)
+	if (pop->obj_root == 0)
 		/* root object list is empty */
-		obj_alloc_root(pop, pop->store, size, constructor, arg);
+		obj_alloc_root(pop, size, constructor, arg);
 	else {
 		size_t old_size = pmemobj_root_size(pop);
-		if (size > old_size && obj_realloc_root(pop, pop->store, size,
+		if (size > old_size && obj_realloc_root(pop, size,
 				old_size, constructor, arg)) {
 			pmemobj_mutex_unlock_nofail(pop, &pop->rootlock);
 			LOG(2, "obj_realloc_root failed");
 			return OID_NULL;
 		}
 	}
-	root = pop->store->root.head.pe_first;
+	root.pool_uuid_lo = pop->uuid_lo;
+	root.off = pop->obj_root + OBJ_OOB_SIZE;
+
 	pmemobj_mutex_unlock_nofail(pop, &pop->rootlock);
 	return root;
 }
@@ -1869,7 +1857,7 @@ pmemobj_list_insert_new(PMEMobjpool *pop, size_t pe_offset, void *head,
 		return OID_NULL;
 	}
 
-	struct list_head *lhead = &pop->store->bytype[type_num].head;
+	struct list_head *lhead = NULL;//&pop->store->bytype[type_num].head;
 	struct carg_bytype carg;
 
 	carg.user_type = (type_num_t)type_num;
@@ -1908,7 +1896,7 @@ pmemobj_list_remove(PMEMobjpool *pop, size_t pe_offset, void *head,
 
 		ASSERT(pobj->data.user_type < PMEMOBJ_NUM_OID_TYPES);
 
-		void *lhead = &pop->store->bytype[pobj->data.user_type].head;
+		void *lhead = NULL;// &pop->store->bytype[pobj->data.user_type].head;
 		return list_remove_free_user(pop, lhead, pe_offset, head, &oid);
 	} else
 		return list_remove(pop, pe_offset, head, oid);

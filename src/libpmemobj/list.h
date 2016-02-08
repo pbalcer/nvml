@@ -81,7 +81,7 @@ int list_remove_free_user(PMEMobjpool *pop, struct list_head *oob_head,
 	PMEMoid *oidp);
 
 int list_remove(PMEMobjpool *pop,
-	size_t pe_offset, struct list_head *head,
+	ssize_t pe_offset, struct list_head *head,
 	PMEMoid oid);
 
 int list_move(PMEMobjpool *pop,

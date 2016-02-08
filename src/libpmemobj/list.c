@@ -1003,7 +1003,7 @@ list_remove_free_user(PMEMobjpool *pop, struct list_head *oob_head,
  */
 int
 list_remove(PMEMobjpool *pop,
-	size_t pe_offset, struct list_head *head,
+	ssize_t pe_offset, struct list_head *head,
 	PMEMoid oid)
 {
 	LOG(3, NULL);
@@ -1027,8 +1027,6 @@ list_remove(PMEMobjpool *pop,
 		(struct lane_list_section *)lane_section->layout;
 	struct redo_log *redo = section->redo;
 	size_t redo_index = 0;
-
-	ASSERT((ssize_t)pe_offset >= 0);
 
 	struct list_entry *entry_ptr =
 		(struct list_entry *)OBJ_OFF_TO_PTR(pop,
