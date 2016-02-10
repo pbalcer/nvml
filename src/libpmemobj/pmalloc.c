@@ -56,14 +56,6 @@ enum alloc_op_redo {
 	MAX_ALLOC_OP_REDO
 };
 
-#define DATA_OFF OBJ_OOB_SIZE
-
-#define USABLE_SIZE(_a)\
-((_a)->size - sizeof (struct allocation_header))
-
-#define MEMORY_BLOCK_IS_EMPTY(_m)\
-((_m).size_idx == 0)
-
 enum operation_entry_type {
 	ENTRY_PERSISTENT,
 	ENTRY_TRANSIENT,
@@ -71,9 +63,36 @@ enum operation_entry_type {
 	MAX_OPERATION_ENTRY_TYPE
 };
 
-#define MAX_TRANSIENT_ENTRIES 2 /* PMEMoid offset and pool_uuid_lo */
-#define MAX_PERSITENT_ENTRIES REDO_LOG_SIZE
+/*
+ * Number of bytes between end of allocation header and beginning of user data.
+ */
+#define	DATA_OFF OBJ_OOB_SIZE
 
+/*
+ * Number of bytes between beginning of memory block and beginning of user data.
+ */
+#define	ALLOC_OFF (DATA_OFF + sizeof (struct allocation_header))
+
+#define	USABLE_SIZE(_a)\
+((_a)->size - sizeof (struct allocation_header))
+
+#define	MEMORY_BLOCK_IS_EMPTY(_m)\
+((_m).size_idx == 0)
+
+#define	MAX_TRANSIENT_ENTRIES 2 /* PMEMoid offset and pool_uuid_lo */
+#define	MAX_PERSITENT_ENTRIES REDO_LOG_SIZE
+
+#define	OP_EN(_ptr, _value) (struct operation_entry)\
+{_ptr, _value}
+
+
+#define	ALLOC_GET_HEADER(_pop, _off) (struct allocation_header *)\
+((char *)OBJ_OFF_TO_PTR((_pop), (_off))\
+- sizeof (struct allocation_header) - DATA_OFF)
+
+/*
+ * operation_context -- context of an ongoing palloc operation
+ */
 struct operation_context {
 	PMEMobjpool *pop;
 
@@ -82,6 +101,9 @@ struct operation_context {
 		entries[MAX_OPERATION_ENTRY_TYPE][MAX_PERSITENT_ENTRIES];
 };
 
+/*
+ * operation_init -- (internal) initializes a new palloc operation
+ */
 static struct operation_context *
 operation_init(PMEMobjpool *pop)
 {
@@ -98,6 +120,9 @@ out:
 	return ctx;
 }
 
+/*
+ * operation_add_entry -- (internal) adds new entry to the current operation
+ */
 static void
 operation_add_entry(struct operation_context *ctx, void *ptr, uint64_t value)
 {
@@ -108,21 +133,26 @@ operation_add_entry(struct operation_context *ctx, void *ptr, uint64_t value)
 		OBJ_PTR_IS_VALID(ctx->pop, ptr) ?
 		ENTRY_PERSISTENT : ENTRY_TRANSIENT;
 
-	ctx->entries[entry_type][ctx->nentries[entry_type]] =
-		(struct operation_entry) {ptr, value};
+	ctx->entries[entry_type][ctx->nentries[entry_type]] = OP_EN(ptr, value);
 
 	ctx->nentries[entry_type]++;
 }
 
+/*
+ * operation_add_entries -- (internal) adds new entries to the current operation
+ */
 static void
 operation_add_entries(struct operation_context *ctx,
-	struct operation_entry *entries, int nentries)
+	struct operation_entry *entries, size_t nentries)
 {
 	for (size_t i = 0; i < nentries; ++i) {
 		operation_add_entry(ctx, entries[i].ptr, entries[i].value);
 	}
 }
 
+/*
+ * operation_process_persistent_redo -- (internal) process using redo
+ */
 static void
 operation_process_persistent_redo(struct operation_context *ctx)
 {
@@ -148,6 +178,9 @@ operation_process_persistent_redo(struct operation_context *ctx)
 	lane_release(ctx->pop);
 }
 
+/*
+ * operation_process -- (internal) processes registered operations
+ */
 static void
 operation_process(struct operation_context *ctx)
 {
@@ -159,10 +192,10 @@ operation_process(struct operation_context *ctx)
 	}
 
 	/*
-	* If there's exactly one persistent entry there's no need to involve
-	* the redo log. We can simply assign the value, the operation will be
-	* atomic.
-	*/
+	 * If there's exactly one persistent entry there's no need to involve
+	 * the redo log. We can simply assign the value, the operation will be
+	 * atomic.
+	 */
 	if (ctx->nentries[ENTRY_PERSISTENT] == 1) {
 		e = &ctx->entries[ENTRY_PERSISTENT][0];
 		*e->ptr = e->value;
@@ -171,6 +204,9 @@ operation_process(struct operation_context *ctx)
 	}
 }
 
+/*
+ * operation_delete -- (internal) deletes current operation context
+ */
 static void
 operation_delete(struct operation_context *ctx)
 {
@@ -191,9 +227,6 @@ alloc_write_header(PMEMobjpool *pop, struct allocation_header *alloc,
 	VALGRIND_REMOVE_FROM_TX(alloc, sizeof (*alloc));
 	pop->persist(pop, alloc, sizeof (*alloc));
 }
-
-#define ALLOC_GET_HEADER(_pop, _off)\
-(struct allocation_header *)((char *)OBJ_OFF_TO_PTR((_pop), (_off)) - sizeof (struct allocation_header) - DATA_OFF)
 
 /*
  * calc_block_offset -- (internal) calculates the block offset of allocation
@@ -236,6 +269,9 @@ get_mblock_from_alloc(PMEMobjpool *pop, struct allocation_header *alloc)
 	return mblock;
 }
 
+/*
+ * alloc_reserve_block -- (internal) reserves a memory block in volatile state
+ */
 static int
 alloc_reserve_block(PMEMobjpool *pop, struct memory_block *m, size_t sizeh)
 {
@@ -274,9 +310,13 @@ alloc_reserve_block(PMEMobjpool *pop, struct memory_block *m, size_t sizeh)
 	return 0;
 }
 
+/*
+ * alloc_prep_block -- (internal) prepares a memory block for allocation
+ */
 static void
 alloc_prep_block(PMEMobjpool *pop, struct memory_block m,
-	void (*constructor)(PMEMobjpool *pop, void *ptr, size_t usable_size, void *arg),
+	void (*constructor)
+		(PMEMobjpool *pop, void *ptr, size_t usable_size, void *arg),
 	void *arg, uint64_t *offset_value)
 {
 	void *block_data = heap_get_block_data(pop, m);
@@ -291,24 +331,27 @@ alloc_prep_block(PMEMobjpool *pop, struct memory_block m,
 	/* mark everything (including headers) as accessible */
 	VALGRIND_DO_MAKE_MEM_UNDEFINED(pop, block_data, real_size);
 	/* mark space as allocated */
-	VALGRIND_DO_MEMPOOL_ALLOC(pop, userdatap,
-			real_size -
-			sizeof (struct allocation_header) - DATA_OFF);
+	VALGRIND_DO_MEMPOOL_ALLOC(pop, userdatap, real_size - ALLOC_OFF);
 
 	alloc_write_header(pop, block_data, m, real_size);
 
 	if (constructor != NULL)
-		constructor(pop, userdatap,
-			real_size - sizeof (struct allocation_header) -
-			DATA_OFF, arg);
+		constructor(pop, userdatap, real_size - ALLOC_OFF, arg);
 
 	*offset_value = OBJ_PTR_TO_OFF(pop, userdatap);
 }
 
+/*
+ * palloc_operation -- persistent memory operation. Takes a NULL pointer
+ * 	or an existing memory block and modifies it to occupy, at least, 'size'
+ *	number of bytes.
+ */
 int
-alloc_operation(PMEMobjpool *pop, uint64_t off, uint64_t *dest_off, size_t size,
-	void (*constructor)(PMEMobjpool *pop, void *ptr, size_t usable_size, void *arg),
-	void *arg, struct operation_entry *entries, int nentries)
+palloc_operation(PMEMobjpool *pop,
+	uint64_t off, uint64_t *dest_off, size_t size,
+	void (*constructor)
+		(PMEMobjpool *pop, void *ptr, size_t usable_size, void *arg),
+	void *arg, struct operation_entry *entries, size_t nentries)
 {
 	struct bucket *b = NULL;
 	struct allocation_header *alloc = NULL;
@@ -355,7 +398,8 @@ alloc_operation(PMEMobjpool *pop, uint64_t off, uint64_t *dest_off, size_t size,
 		heap_lock_if_run(pop, nb);
 
 		uint64_t alloc_op_result;
-		uint64_t *alloc_hdr = heap_get_block_header(pop, nb, HEAP_OP_ALLOC, &alloc_op_result);
+		uint64_t *alloc_hdr = heap_get_block_header(pop, nb,
+			HEAP_OP_ALLOC, &alloc_op_result);
 
 		operation_add_entry(ctx, alloc_hdr, alloc_op_result);
 	}
@@ -380,7 +424,7 @@ alloc_operation(PMEMobjpool *pop, uint64_t off, uint64_t *dest_off, size_t size,
 		heap_unlock_if_run(pop, m);
 
 		VALGRIND_DO_MEMPOOL_FREE(pop,
-				heap_get_block_data(pop, m) +
+				(char *)heap_get_block_data(pop, m) +
 				sizeof (struct allocation_header) + DATA_OFF);
 
 		/* we might have been operating on inactive run */
@@ -409,7 +453,7 @@ out:
 int
 pmalloc(PMEMobjpool *pop, uint64_t *off, size_t size)
 {
-	return alloc_operation(pop, 0, off, size, NULL, NULL, NULL, 0);
+	return palloc_operation(pop, 0, off, size, NULL, NULL, NULL, 0);
 }
 
 /*
@@ -425,7 +469,7 @@ pmalloc_construct(PMEMobjpool *pop, uint64_t *off, size_t size,
 	void (*constructor)(PMEMobjpool *pop, void *ptr,
 	size_t usable_size, void *arg), void *arg)
 {
-	return alloc_operation(pop, 0, off, size, constructor, arg, NULL, 0);
+	return palloc_operation(pop, 0, off, size, constructor, arg, NULL, 0);
 }
 
 /*
@@ -438,7 +482,7 @@ pmalloc_construct(PMEMobjpool *pop, uint64_t *off, size_t size,
 int
 prealloc(PMEMobjpool *pop, uint64_t *off, size_t size)
 {
-	return alloc_operation(pop, *off, off, size, NULL, 0, NULL, 0);
+	return palloc_operation(pop, *off, off, size, NULL, 0, NULL, 0);
 }
 
 /*
@@ -454,7 +498,8 @@ prealloc_construct(PMEMobjpool *pop, uint64_t *off, size_t size,
 	void (*constructor)(PMEMobjpool *pop, void *ptr,
 	size_t usable_size, void *arg), void *arg)
 {
-	return alloc_operation(pop, *off, off, size, constructor, arg, NULL, 0);
+	return palloc_operation(pop, *off, off, size, constructor, arg,
+		NULL, 0);
 }
 
 /*
@@ -476,10 +521,16 @@ pmalloc_usable_size(PMEMobjpool *pop, uint64_t off)
 void
 pfree(PMEMobjpool *pop, uint64_t *off)
 {
-	int ret = alloc_operation(pop, *off, off, 0, NULL, NULL, NULL, 0);
+	int ret = palloc_operation(pop, *off, off, 0, NULL, NULL, NULL, 0);
 	ASSERTeq(ret, 0);
 }
 
+/*
+ * pmalloc_search_cb -- (internal) foreach callback. If the argument is equal
+ *	to the current object offset then sets the argument to UINT64_MAX.
+ *	If the argument is UINT64_MAX it breaks the iteration and sets the
+ *	argument to the current object offset.
+ */
 static int
 pmalloc_search_cb(uint64_t off, void *arg)
 {
@@ -497,6 +548,9 @@ pmalloc_search_cb(uint64_t off, void *arg)
 	return 0;
 }
 
+/*
+ * pmalloc_first -- returns the first object from the heap.
+ */
 uint64_t
 pmalloc_first(PMEMobjpool *pop)
 {
@@ -511,17 +565,22 @@ pmalloc_first(PMEMobjpool *pop)
 	return off_search + sizeof (struct allocation_header);
 }
 
+/*
+ * pmalloc_next -- returns the next object relative to 'off'.
+ */
 uint64_t
 pmalloc_next(PMEMobjpool *pop, uint64_t off)
 {
 	struct allocation_header *alloc = ALLOC_GET_HEADER(pop, off);
 	struct memory_block m = get_mblock_from_alloc(pop, alloc);
 
-	uint64_t off_search = off - sizeof (struct allocation_header) - DATA_OFF;
+	uint64_t off_search = off - ALLOC_OFF;
 
 	heap_foreach_object(pop, pmalloc_search_cb, &off_search, m);
 
-	if (off_search == (off - sizeof (struct allocation_header) - DATA_OFF) || off_search == 0 || off_search == UINT64_MAX)
+	if (off_search == (off - ALLOC_OFF) ||
+		off_search == 0 ||
+		off_search == UINT64_MAX)
 		return 0;
 
 	return off_search + sizeof (struct allocation_header);

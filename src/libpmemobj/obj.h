@@ -121,7 +121,7 @@ struct pmemobjpool {
 	char layout[PMEMOBJ_MAX_LAYOUT];
 	uint64_t lanes_offset;
 	uint64_t nlanes;
-	uint64_t obj_root;
+	uint64_t root_offset;
 	uint64_t heap_offset;
 	uint64_t heap_size;
 	unsigned char unused[OBJ_DSC_P_UNUSED]; /* must be zero */

@@ -545,27 +545,10 @@ main(int argc, char *argv[])
 			PMEMOBJ_MIN_POOL, S_IWUSR | S_IRUSR)) == NULL)
 		FATAL("!pmemobj_create: %s", path);
 
-if (0) {
 	test_alloc_api(pop);
 	test_realloc_api(pop);
 	test_list_api(pop);
 	test_tx_api(pop);
-}
-
-	/*	PMEMoid oid[4];
-	pmemobj_alloc(pop, &oid[0], 100, 0, NULL, NULL);
-	pmemobj_alloc(pop, &oid[1], 100, 0, NULL, NULL);
-	pmemobj_alloc(pop, &oid[2], 100, 0, NULL, NULL);
-	pmemobj_alloc(pop, &oid[3], 300*1024, 0, NULL, NULL);
-	printf("alloc: %lu %lu %lu %lu\n", oid[0].off, oid[1].off, oid[2].off, oid[3].off);*/
-	//pmemobj_free(&oid[1]);
-
-	PMEMoid oid_iter;
-	int type_iter;
-	POBJ_FOREACH(pop, oid_iter, type_iter) {
-		printf("%lu %d\n", oid_iter.off, type_iter);
-	}
-
 
 	pmemobj_close(pop);
 

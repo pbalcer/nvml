@@ -487,8 +487,6 @@ PMEMoid pmemobj_first(PMEMobjpool *pop, unsigned int type_num);
  */
 PMEMoid pmemobj_next(PMEMoid oid);
 
-void pmemobj_foreach(PMEMobjpool *pop, void (*callback)(PMEMoid oid, void *arg), void *arg);
-
 #define	POBJ_FIRST(pop, t) (\
 { TOID(t) _pobj_ret = (TOID(t))pmemobj_first((pop), TOID_TYPE_NUM(t));\
 _pobj_ret; })

@@ -357,7 +357,7 @@ tx_clear_undo_log(PMEMobjpool *pop, struct list_head *head, int free,
 			/* remove and free all elements from undo log */
 			list_remove_free_oob(pop, head, &obj);
 		} else {
-			list_remove(pop, -OBJ_OOB_SIZE, head, obj);
+			list_remove(pop, -1 * (ssize_t)OBJ_OOB_SIZE, head, obj);
 		}
 	}
 }
@@ -645,7 +645,8 @@ tx_post_commit_alloc(PMEMobjpool *pop, struct lane_tx_layout *layout)
 	while (!OBJ_LIST_EMPTY(&layout->undo_alloc)) {
 		obj = layout->undo_alloc.pe_first;
 
-		list_remove(pop, -OBJ_OOB_SIZE, &layout->undo_alloc, obj);
+		list_remove(pop, -1 * (ssize_t)OBJ_OOB_SIZE,
+			&layout->undo_alloc, obj);
 	}
 }
 
@@ -1632,7 +1633,8 @@ pmemobj_tx_free(PMEMoid oid)
 
 	if (oobh->data.internal_type == TYPE_ALLOCATED) {
 		/* the object is in object store */
-		list_insert(lane->pop, 0, &layout->undo_free, OID_NULL, 0, oid);
+		list_insert(lane->pop, -1 * (ssize_t)OBJ_OOB_SIZE,
+			&layout->undo_free, OID_NULL, 0, oid);
 	} else {
 		ASSERTeq(oobh->data.internal_type, TYPE_NONE);
 #ifdef USE_VG_PMEMCHECK

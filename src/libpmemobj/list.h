@@ -41,12 +41,10 @@
  * lane_list_section -- structure of list section in lane
  *
  * obj_offset - offset to object which should be freed
- * obj_size   - size of object which was reallocated
  * redo       - redo log
  */
 struct lane_list_section {
 	uint64_t obj_offset;
-	uint64_t obj_size;
 	struct redo_log redo[REDO_NUM_ENTRIES];
 };
 
@@ -70,7 +68,7 @@ int list_insert_new_user(PMEMobjpool *pop, struct list_head *oob_head,
 	size_t usable_size, void *arg), void *arg, PMEMoid *oidp);
 
 int list_insert(PMEMobjpool *pop,
-	size_t pe_offset, struct list_head *head, PMEMoid dest, int before,
+	ssize_t pe_offset, struct list_head *head, PMEMoid dest, int before,
 	PMEMoid oid);
 
 void list_remove_free_oob(PMEMobjpool *pop, struct list_head *oob_head,
