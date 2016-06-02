@@ -38,7 +38,7 @@ LIBRARY_VERSION = 0.0
 SOURCE = libpmemobj.c obj.c redo.c pmalloc.c lane.c list.c ctree.c bucket.c\
 	heap.c cuckoo.c sync.c tx.c memops.c memblock.c pvector.c\
 	$(COMMON)/util.c $(COMMON)/util_linux.c $(COMMON)/set.c\
-	$(COMMON)/set_linux.c $(COMMON)/out.c
+	$(COMMON)/set_linux.c $(COMMON)/out.c ctl.c
 
 include ../Makefile.inc
 

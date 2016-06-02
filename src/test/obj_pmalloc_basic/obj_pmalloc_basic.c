@@ -46,6 +46,7 @@
 #include "heap_layout.h"
 #include "unittest.h"
 #include "valgrind_internal.h"
+#include "ctl.h"
 
 #define MOCK_POOL_SIZE PMEMOBJ_MIN_POOL
 #define TEST_MEGA_ALLOC_SIZE (1024 * 1024)
@@ -185,6 +186,8 @@ test_mock_pool_allocs()
 	mock_pop->flush = obj_flush;
 	mock_pop->drain = obj_drain;
 	mock_pop->memcpy_persist = obj_memcpy;
+
+	mock_pop->stats = ctl_stats_new();
 
 	heap_init(mock_pop);
 	heap_boot(mock_pop);

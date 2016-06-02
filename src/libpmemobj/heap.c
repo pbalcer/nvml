@@ -54,6 +54,7 @@
 #include "obj.h"
 #include "sys_util.h"
 #include "valgrind_internal.h"
+#include "ctl.h"
 
 #define MAX_RUN_LOCKS 1024
 
@@ -643,6 +644,8 @@ heap_populate_buckets(PMEMobjpool *pop)
 
 	uint32_t zone_id = h->zones_exhausted++;
 	struct zone *z = ZID_TO_ZONE(pop->hlayout, zone_id);
+
+	CTL_STAT_SET(heap.active_zones, h->zones_exhausted);
 
 	/* ignore zone and chunk headers */
 	VALGRIND_ADD_TO_GLOBAL_TX_IGNORE(z, sizeof(z->header) +

@@ -146,6 +146,8 @@ struct pmemobjpool {
 	struct lane_descriptor lanes_desc;
 	uint64_t uuid_lo;
 
+	struct ctl_stats *stats;
+
 	struct pmemobjpool *replica;	/* next replica */
 
 	/* per-replica functions: pmem or non-pmem */
@@ -164,7 +166,7 @@ struct pmemobjpool {
 
 	PMEMmutex rootlock;	/* root object lock */
 	int is_master_replica;
-	char unused2[1804];
+	char unused2[1796];
 };
 
 /*

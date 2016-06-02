@@ -54,6 +54,7 @@
 #include "heap.h"
 #include "bucket.h"
 #include "valgrind_internal.h"
+#include "ctl.h"
 
 /*
  * Number of bytes between end of allocation header and beginning of user data.
@@ -222,8 +223,10 @@ alloc_prep_block(PMEMobjpool *pop, struct memory_block m,
 	 * will be used to set the offset destination pointer provided by the
 	 * caller.
 	 */
-	if (!ret)
+	if (!ret) {
 		*offset_value = OBJ_PTR_TO_OFF(pop, userdatap);
+		CTL_STAT_INC(heap.allocated, real_size);
+	}
 
 	return ret;
 }
@@ -478,6 +481,9 @@ palloc_operation(PMEMobjpool *pop,
 		VALGRIND_DO_MEMPOOL_FREE(pop,
 			(char *)heap_get_block_data(pop, existing_block)
 			+ ALLOC_OFF);
+
+		CTL_STAT_INC(heap.freed,
+			b->unit_size * existing_block.size_idx);
 
 		/* we might have been operating on inactive run */
 		if (b != NULL) {

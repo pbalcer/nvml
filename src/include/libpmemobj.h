@@ -105,6 +105,9 @@ void pmemobj_set_funcs(
 
 const char *pmemobj_errormsg(void);
 
+int pmemobj_ctl(PMEMobjpool *pop, const char *name,
+	void *read_arg, void *write_arg);
+
 /*
  * Locking...
  */

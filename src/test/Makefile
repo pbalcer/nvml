@@ -69,6 +69,7 @@ OBJ_TESTS = \
 	obj_check\
 	obj_convert\
 	obj_ctree\
+	obj_ctl\
 	obj_cuckoo\
 	obj_debug\
 	obj_direct\

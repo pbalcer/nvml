@@ -1,5 +1,6 @@
+#!/bin/bash -e
 #
-# Copyright 2015-2016, Intel Corporation
+# Copyright 2016, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -30,25 +31,15 @@
 # OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.
 #
 
-#
-# src/test/obj_bucket/Makefile -- build bucket unit test
-#
-TOP = ../../..
+export UNITTEST_NAME=obj_ctl/TEST0
+export UNITTEST_NUM=0
 
-vpath %.c $(TOP)/src/libpmemobj
-vpath %.c $(TOP)/src/common
+# standard unit test setup
+. ../unittest/unittest.sh
 
-TARGET = obj_bucket
-OBJS = obj_bucket.o pmalloc.o bucket.o redo.o heap.o lane.o ctree.o\
-    util.o util_linux.o set.o set_linux.o out.o obj.o cuckoo.o\
-    list.o sync.o tx.o memops.o libpmemobj.o memblock.o pvector.o ctl.o
+setup
 
-LIBPMEM=y
-LIBPMEMOBJ=y
+expect_normal_exit\
+	./obj_ctl$EXESUFFIX $DIR/testfile1
 
-out.o: CFLAGS += -DSRCVERSION=\"utversion\"
-
-include ../Makefile.inc
-
-LDFLAGS += $(call extract_funcs, obj_bucket.c)
-INCS += -I$(TOP)/src/libpmemobj/ -I$(TOP)/src/common/
+pass

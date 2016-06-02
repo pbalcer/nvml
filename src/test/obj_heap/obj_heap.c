@@ -46,6 +46,7 @@
 #include "pmalloc.h"
 #include "list.h"
 #include "obj.h"
+#include "ctl.h"
 #include "unittest.h"
 
 #define MOCK_POOL_SIZE PMEMOBJ_MIN_POOL
@@ -73,6 +74,7 @@ test_heap()
 	pop->heap_size = MOCK_POOL_SIZE - sizeof(PMEMobjpool);
 	pop->heap_offset = (uint64_t)((uint64_t)&mpop->heap - (uint64_t)mpop);
 	pop->persist = obj_heap_persist;
+	pop->stats = ctl_stats_new();
 
 	UT_ASSERT(heap_check(pop) != 0);
 	UT_ASSERT(heap_init(pop) == 0);

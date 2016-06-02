@@ -39,7 +39,7 @@ vpath %.c ../../common
 TARGET = obj_pvector
 OBJS = obj_pvector.o pmalloc.o bucket.o redo.o heap.o lane.o ctree.o\
     util.o util_linux.o set.o set_linux.o out.o obj.o cuckoo.o list.o\
-    sync.o memops.o tx.o pvector.o libpmemobj.o memblock.o
+    sync.o memops.o tx.o pvector.o libpmemobj.o memblock.o ctl.o
 
 LIBPMEM=y
 

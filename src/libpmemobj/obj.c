@@ -53,6 +53,7 @@
 #include "cuckoo.h"
 #include "ctree.h"
 #include "obj.h"
+#include "ctl.h"
 #include "sync.h"
 #include "valgrind_internal.h"
 
@@ -708,6 +709,11 @@ pmemobj_runtime_init(PMEMobjpool *pop, int rdonly, int boot)
 
 	pop->uuid_lo = pmemobj_get_uuid_lo(pop);
 
+	if ((pop->stats = ctl_stats_new()) == NULL) {
+		ERR("!ctl_stats_new");
+		return -1;
+	}
+
 	if (boot) {
 		if ((errno = pmemobj_boot(pop)) != 0)
 			return -1;
@@ -1024,6 +1030,8 @@ static void
 pmemobj_cleanup(PMEMobjpool *pop)
 {
 	LOG(3, "pop %p", pop);
+
+	ctl_stats_delete(pop->stats);
 
 	heap_cleanup(pop);
 
