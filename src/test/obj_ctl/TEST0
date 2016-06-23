@@ -37,6 +37,8 @@ export UNITTEST_NUM=0
 # standard unit test setup
 . ../unittest/unittest.sh
 
+require_build_type debug static-debug
+
 setup
 
 expect_normal_exit\

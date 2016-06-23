@@ -40,9 +40,39 @@ struct ctl_stats_heap {
 	size_t active_zones;
 };
 
+typedef void (*ctl_trap)(PMEMobjpool *pop);
+
+struct ctl_traps_allocator
+{
+	ctl_trap after_existing_block_free;
+	ctl_trap after_new_block_prep;
+	ctl_trap before_ops_process;
+	ctl_trap after_ops_process;
+	ctl_trap after_run_degrade;
+};
+
+struct ctl_traps {
+	struct ctl_traps_allocator allocator;
+};
+
+struct ctl_debug {
+	struct ctl_traps traps;
+};
+
 struct ctl_stats {
+	struct ctl_debug debug;
 	struct ctl_stats_heap heap;
 };
+
+#ifdef DEBUG
+#define CTL_SIGNAL(name) do {\
+	if (pop->stats->debug.traps.name != NULL)\
+		pop->stats->debug.traps.name(pop);\
+} while (0)
+#else
+#define CTL_SIGNAL(name) do {\
+} while (0)
+#endif
 
 struct ctl_stats *ctl_stats_new(void);
 void ctl_stats_delete(struct ctl_stats *stats);

@@ -123,6 +123,83 @@ test_heap_stats(PMEMobjpool *pop)
 	UT_ASSERTeq(active_zones, 1);
 }
 
+static int caught;
+
+static void
+ctl_trap_handler(PMEMobjpool *pop)
+{
+	caught = 1;
+}
+
+static void
+test_ctl_traps(PMEMobjpool *pop)
+{
+	int ret;
+	ret = pmemobj_ctl(pop,
+		"debug.traps.allocator.after_new_block_prep",
+		NULL, ctl_trap_handler);
+	UT_ASSERTeq(ret, 0);
+
+	PMEMoid oid;
+	pmemobj_zalloc(pop, &oid, 1, 0);
+	UT_ASSERT(!OID_IS_NULL(oid));
+
+	UT_ASSERTeq(caught, 1);
+
+	caught = 0;
+
+	ret = pmemobj_ctl(pop,
+		"debug.traps.allocator.after_existing_block_free",
+		NULL, ctl_trap_handler);
+	UT_ASSERTeq(ret, 0);
+
+	pmemobj_free(&oid);
+	UT_ASSERT(OID_IS_NULL(oid));
+
+	UT_ASSERTeq(caught, 1);
+
+	caught = 0;
+
+	ret = pmemobj_ctl(pop,
+		"debug.traps.allocator.before_ops_process",
+		NULL, ctl_trap_handler);
+	UT_ASSERTeq(ret, 0);
+
+	pmemobj_zalloc(pop, &oid, 1, 0);
+	UT_ASSERT(!OID_IS_NULL(oid));
+
+	UT_ASSERTeq(caught, 1);
+
+	caught = 0;
+
+	ret = pmemobj_ctl(pop,
+		"debug.traps.allocator.after_run_degrade",
+		NULL, ctl_trap_handler);
+	UT_ASSERTeq(ret, 0);
+
+	pmemobj_free(&oid);
+	UT_ASSERT(OID_IS_NULL(oid));
+
+	UT_ASSERTeq(caught, 1);
+
+	caught = 0;
+
+	ret = pmemobj_ctl(pop,
+		"debug.traps.allocator.after_ops_process",
+		NULL, ctl_trap_handler);
+	UT_ASSERTeq(ret, 0);
+
+	pmemobj_zalloc(pop, &oid, 1, 0);
+	UT_ASSERT(!OID_IS_NULL(oid));
+
+	UT_ASSERTeq(caught, 1);
+
+	caught = 0;
+
+	/* cleanup */
+	pmemobj_free(&oid);
+}
+
 int
 main(int argc, char *argv[])
 {
@@ -141,6 +218,7 @@ main(int argc, char *argv[])
 		UT_FATAL("!pmemobj_create: %s", path);
 
 	test_heap_stats(pop);
+	test_ctl_traps(pop);
 
 	pmemobj_close(pop);
 

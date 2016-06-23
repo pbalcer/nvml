@@ -382,6 +382,8 @@ palloc_operation(PMEMobjpool *pop,
 		 */
 		reclaimed_block = heap_free_block(pop, b, existing_block, &ctx);
 		offset_value = 0;
+
+		CTL_SIGNAL(allocator.after_existing_block_free);
 	}
 
 	if (!MEMORY_BLOCK_IS_EMPTY(new_block)) {
@@ -419,6 +421,7 @@ palloc_operation(PMEMobjpool *pop,
 			errno = ECANCELED;
 			goto out;
 		}
+		CTL_SIGNAL(allocator.after_new_block_prep);
 
 		/*
 		 * This lock must be held for the duration between the creation
@@ -460,14 +463,15 @@ palloc_operation(PMEMobjpool *pop,
 		operation_add_entry(&ctx, dest_off,
 			offset_value, OPERATION_SET);
 
+	CTL_SIGNAL(allocator.before_ops_process);
 	operation_process(&ctx);
+	CTL_SIGNAL(allocator.after_ops_process);
 
 	/*
 	 * After the operation succeeded, the persistent state is all in order
 	 * but in some cases it might not be in-sync with the its transient
 	 * representation.
 	 */
-
 	if (!MEMORY_BLOCK_IS_EMPTY(new_block)) {
 		/* new block run lock */
 		MEMBLOCK_OPS(AUTO, &new_block)->unlock(&new_block, pop);
@@ -511,9 +515,11 @@ palloc_operation(PMEMobjpool *pop,
 			 * state as clean as possible - and that means not
 			 * leaving unused data around.
 			 */
-			if (b->type == BUCKET_RUN)
+			if (b->type == BUCKET_RUN) {
 				heap_degrade_run_if_empty(pop, b,
 					reclaimed_block);
+				CTL_SIGNAL(allocator.after_run_degrade);
+			}
 		}
 	}
 

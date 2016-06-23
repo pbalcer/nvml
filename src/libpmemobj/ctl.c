@@ -64,44 +64,52 @@
 
 #define CTL_NODE_END {NULL, NULL, NULL, NULL}
 
+#define CTL_NODE(prefix, name)\
+ctl_node_##prefix##_##name
+
 /* Declaration of a new child node */
-#define CTL_CHILD(name)\
-{CTL_STR(name), NULL, NULL, (struct ctl_node *)ctl_##name}
+#define CTL_CHILD(prefix, name)\
+{CTL_STR(name), NULL, NULL, (struct ctl_node *)CTL_NODE(prefix, name)}
+
+#define CTL_READ_HANDLER(prefix, name)\
+ctl_##prefix##_##name##_read
+
+#define CTL_WRITE_HANDLER(prefix, name)\
+ctl_##prefix##_##name##_write
 
 /*
  * Declaration of a new read-only leaf. If used the corresponding read function
  * must be declared by CTL_READ_HANDLER or CTL_GEN_RO_STAT macros.
  */
-#define CTL_LEAF_RO(name)\
-{CTL_STR(name), ctl_##name##_read, NULL, NULL}
+#define CTL_LEAF_RO(prefix, name)\
+{CTL_STR(name), CTL_READ_HANDLER(prefix, name), NULL, NULL}
 
 /*
  * Declaration of a new write-only leaf. If used the corresponding write
  * function must be declared by CTL_WRITE_HANDLER macro.
  */
-#define CTL_LEAF_WO(name)\
-{CTL_STR(name), NULL, ctl_##name##_write, NULL}
+#define CTL_LEAF_WO(prefix, name)\
+{CTL_STR(name), NULL, CTL_WRITE_HANDLER(prefix, name), NULL}
 
 /*
  * Declaration of a new read-write leaf. If used both read and write function
  * must be declared by CTL_READ_HANDLER and CTL_WRITE_HANDLER macros.
  */
-#define CTL_LEAF_RW(name)\
-{CTL_STR(name), ctl_##name##_read, ctl_##name##_write, NULL}
-
-#define CTL_READ_HANDLER(name)\
-ctl_##name##_read
-
-#define CTL_WRITE_HANDLER(name)\
-ctl_##name##_write
+#define CTL_LEAF_RW(prefix, name)\
+{CTL_STR(name), CTL_READ_HANDLER(prefix, name),\
+	CTL_WRITE_HANDLER(prefix, name), NULL}
 
 /*
  * If the CTL leaf node is simply a read-only statistics, this macro can be
  * used to declare the read function that returns the value by reference.
  */
-#define CTL_GEN_RO_STAT(prefix, stat, type)\
-static int CTL_READ_HANDLER(stat)(PMEMobjpool *pop, void *arg)\
-{ type *out = arg; *out = CTL_STAT_GET(prefix.stat, type); return 0; }
+#define CTL_GEN_RO_STAT(prefix, struct_prefix, stat, type)\
+static int CTL_READ_HANDLER(prefix, stat)(PMEMobjpool *pop, void *arg)\
+{ type *out = arg; *out = CTL_STAT_GET(struct_prefix.stat, type); return 0; }
+
+#define CTL_GEN_WO_TRAP(prefix, struct_prefix, name)\
+static int CTL_WRITE_HANDLER(prefix, name)(PMEMobjpool *pop, void *arg)\
+{ pop->stats->debug.traps.struct_prefix.name = arg; return 0; }
 
 typedef int (*node_callback)(PMEMobjpool *pop, void *arg);
 
@@ -116,23 +124,23 @@ struct ctl_node {
 	struct ctl_node *children;
 };
 
-CTL_GEN_RO_STAT(heap, allocated, size_t);
-CTL_GEN_RO_STAT(heap, freed, size_t);
-CTL_GEN_RO_STAT(heap, active_zones, size_t);
+CTL_GEN_RO_STAT(stats_heap, heap, allocated, size_t);
+CTL_GEN_RO_STAT(stats_heap, heap, freed, size_t);
+CTL_GEN_RO_STAT(stats_heap, heap, active_zones, size_t);
 
-static const struct ctl_node ctl_heap[] = {
-	CTL_LEAF_RO(allocated),
-	CTL_LEAF_RO(freed),
-	CTL_LEAF_RO(active_zones),
+static const struct ctl_node CTL_NODE(stats, heap)[] = {
+	CTL_LEAF_RO(stats_heap, allocated),
+	CTL_LEAF_RO(stats_heap, freed),
+	CTL_LEAF_RO(stats_heap, active_zones),
 	CTL_NODE_END
 };
 
-static const struct ctl_node ctl_stats[] = {
-	CTL_CHILD(heap),
+static const struct ctl_node CTL_NODE(, stats)[] = {
+	CTL_CHILD(stats, heap),
 	CTL_NODE_END
 };
 
-static int CTL_READ_HANDLER(test_rw)(PMEMobjpool *pop, void *arg)
+static int CTL_READ_HANDLER(debug, test_rw)(PMEMobjpool *pop, void *arg)
 {
 	int *arg_rw = arg;
 	*arg_rw = 0;
@@ -140,7 +148,7 @@ static int CTL_READ_HANDLER(test_rw)(PMEMobjpool *pop, void *arg)
 	return 0;
 }
 
-static int CTL_WRITE_HANDLER(test_rw)(PMEMobjpool *pop, void *arg)
+static int CTL_WRITE_HANDLER(debug, test_rw)(PMEMobjpool *pop, void *arg)
 {
 	int *arg_rw = arg;
 	*arg_rw = 1;
@@ -148,7 +156,7 @@ static int CTL_WRITE_HANDLER(test_rw)(PMEMobjpool *pop, void *arg)
 	return 0;
 }
 
-static int CTL_WRITE_HANDLER(test_wo)(PMEMobjpool *pop, void *arg)
+static int CTL_WRITE_HANDLER(debug, test_wo)(PMEMobjpool *pop, void *arg)
 {
 	int *arg_wo = arg;
 	*arg_wo = 1;
@@ -156,7 +164,7 @@ static int CTL_WRITE_HANDLER(test_wo)(PMEMobjpool *pop, void *arg)
 	return 0;
 }
 
-static int CTL_READ_HANDLER(test_ro)(PMEMobjpool *pop, void *arg)
+static int CTL_READ_HANDLER(debug, test_ro)(PMEMobjpool *pop, void *arg)
 {
 	int *arg_ro = arg;
 	*arg_ro = 0;
@@ -164,10 +172,31 @@ static int CTL_READ_HANDLER(test_ro)(PMEMobjpool *pop, void *arg)
 	return 0;
 }
 
-static const struct ctl_node ctl_debug[] = {
-	CTL_LEAF_RO(test_ro),
-	CTL_LEAF_WO(test_wo),
-	CTL_LEAF_RW(test_rw),
+CTL_GEN_WO_TRAP(debug_traps_allocator, allocator, after_existing_block_free);
+CTL_GEN_WO_TRAP(debug_traps_allocator, allocator, after_new_block_prep);
+CTL_GEN_WO_TRAP(debug_traps_allocator, allocator, before_ops_process);
+CTL_GEN_WO_TRAP(debug_traps_allocator, allocator, after_ops_process);
+CTL_GEN_WO_TRAP(debug_traps_allocator, allocator, after_run_degrade);
+
+static const struct ctl_node CTL_NODE(debug_traps, allocator)[] = {
+	CTL_LEAF_WO(debug_traps_allocator, after_existing_block_free),
+	CTL_LEAF_WO(debug_traps_allocator, after_new_block_prep),
+	CTL_LEAF_WO(debug_traps_allocator, before_ops_process),
+	CTL_LEAF_WO(debug_traps_allocator, after_ops_process),
+	CTL_LEAF_WO(debug_traps_allocator, after_run_degrade),
+
+	CTL_NODE_END
+};
+
+static const struct ctl_node CTL_NODE(debug, traps)[] = {
+	CTL_CHILD(debug_traps, allocator)
+};
+
+static const struct ctl_node CTL_NODE(, debug)[] = {
+	CTL_LEAF_RO(debug, test_ro),
+	CTL_LEAF_WO(debug, test_wo),
+	CTL_LEAF_RW(debug, test_rw),
+	CTL_CHILD(debug, traps),
 	CTL_NODE_END
 };
 
@@ -186,9 +215,9 @@ static const struct ctl_node ctl_root[] = {
 	 * Debug features only relevant for testing the library and the ctl
 	 * interface itself.
 	 */
-	CTL_CHILD(debug),
+	CTL_CHILD(, debug),
 
-	CTL_CHILD(stats),
+	CTL_CHILD(, stats),
 	CTL_NODE_END
 };
 
