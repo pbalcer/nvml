@@ -751,7 +751,7 @@ function configure_valgrind() {
 			echo "all valgrind tests disabled"
 		elif [ "$2" = "force-enable" ]; then
 			CHECK_TYPE="$1"
-			require_valgrind_$1
+			require_valgrind_$1 $3
 		elif [ "$2" = "force-disable" ]; then
 			CHECK_TYPE=none
 		else
@@ -769,7 +769,7 @@ function configure_valgrind() {
 			echo "$UNITTEST_NAME: SKIP RUNTESTS script parameter $CHECK_TYPE tries to enable test defined in TEST as force-disable"
 			exit 0
 		fi
-		require_valgrind_$CHECK_TYPE
+		require_valgrind_$CHECK_TYPE $3
 	fi
 }
 

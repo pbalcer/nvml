@@ -272,6 +272,7 @@ FUNC_MOCK_RUN_DEFAULT {
 			Pop,
 			Pop,
 			REDO_NUM_ENTRIES);
+	Pop->persist(Pop, &Pop->redo, sizeof(Pop->redo));
 
 	return Pop;
 }
@@ -503,13 +504,13 @@ FUNC_MOCK_END
 /*
  * redo_log_store_last -- redo_log_store_last mock
  */
-FUNC_MOCK(redo_log_store_last, void, PMEMobjpool *pop,
+FUNC_MOCK(redo_log_store_last, void, struct redo_ctx *ctx,
 		struct redo_log *redo, size_t index,
 		uint64_t offset, uint64_t value)
 	FUNC_MOCK_RUN_DEFAULT {
 		switch (Redo_fail) {
 		case FAIL_AFTER_FINISH:
-			_FUNC_REAL(redo_log_store_last)(pop,
+			_FUNC_REAL(redo_log_store_last)(ctx,
 					redo, index, offset, value);
 			DONE(NULL);
 			break;
@@ -517,7 +518,7 @@ FUNC_MOCK(redo_log_store_last, void, PMEMobjpool *pop,
 			DONE(NULL);
 			break;
 		default:
-			_FUNC_REAL(redo_log_store_last)(pop,
+			_FUNC_REAL(redo_log_store_last)(ctx,
 					redo, index, offset, value);
 			break;
 		}
@@ -528,29 +529,29 @@ FUNC_MOCK_END
 /*
  * redo_log_set_last -- redo_log_set_last mock
  */
-FUNC_MOCK(redo_log_set_last, void, PMEMobjpool *pop,
+FUNC_MOCK(redo_log_set_last, void, struct redo_ctx *ctx,
 		struct redo_log *redo, size_t index)
 	FUNC_MOCK_RUN_DEFAULT {
 		switch (Redo_fail) {
 		case FAIL_AFTER_FINISH:
-			_FUNC_REAL(redo_log_set_last)(pop, redo, index);
+			_FUNC_REAL(redo_log_set_last)(ctx, redo, index);
 			DONE(NULL);
 			break;
 		case FAIL_BEFORE_FINISH:
 			DONE(NULL);
 			break;
 		default:
-			_FUNC_REAL(redo_log_set_last)(pop, redo, index);
+			_FUNC_REAL(redo_log_set_last)(ctx, redo, index);
 			break;
 		}
 
 	}
 FUNC_MOCK_END
 
-FUNC_MOCK(redo_log_process, void, PMEMobjpool *pop,
+FUNC_MOCK(redo_log_process, void, struct redo_ctx *ctx,
 		struct redo_log *redo, size_t nentries)
 		FUNC_MOCK_RUN_DEFAULT {
-			_FUNC_REAL(redo_log_process)(pop, redo, nentries);
+			_FUNC_REAL(redo_log_process)(ctx, redo, nentries);
 			if (Redo_fail == FAIL_AFTER_PROCESS) {
 				DONE(NULL);
 			}
