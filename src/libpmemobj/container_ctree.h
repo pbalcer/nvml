@@ -31,29 +31,9 @@
  */
 
 /*
- * ctree.h -- internal definitions for crit-bit tree
+ * container_ctree.h -- internal definitions for ctree bucket container
  */
 
-struct ctree;
-
-struct ctree *ctree_new(void);
-void ctree_delete(struct ctree *t);
-void ctree_clear(struct ctree *t);
-
-int ctree_insert(struct ctree *t, uint64_t key, uint64_t value);
-int ctree_insert_unlocked(struct ctree *t, uint64_t key, uint64_t value);
-
-uint64_t *ctree_get(struct ctree *t, uint64_t key);
-uint64_t *ctree_get_unlocked(struct ctree *t, uint64_t key);
-
-uint64_t ctree_find(struct ctree *t, uint64_t key);
-uint64_t ctree_find_unlocked(struct ctree *t, uint64_t key);
-
-uint64_t ctree_find_le(struct ctree *t, uint64_t *key);
-uint64_t ctree_find_le_unlocked(struct ctree *t, uint64_t *key);
-
-uint64_t ctree_remove(struct ctree *t, uint64_t key, int eq);
-uint64_t ctree_remove_unlocked(struct ctree *t, uint64_t key, int eq);
-
-int ctree_is_empty(struct ctree *t);
-int ctree_is_empty_unlocked(struct ctree *t);
+struct block_container *bucket_tree_create(void);
+void bucket_tree_delete(struct block_container *bc);
+extern const struct block_container_ops container_ctree_ops;

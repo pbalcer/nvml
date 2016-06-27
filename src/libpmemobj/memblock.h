@@ -53,6 +53,9 @@ struct memory_block {
 	uint16_t block_off;
 };
 
+#define EMPTY_MEMORY_BLOCK (struct memory_block)\
+{0, 0, 0, 0}
+
 enum memory_block_type {
 	/*
 	 * Huge memory blocks are directly backed by memory chunks. A single

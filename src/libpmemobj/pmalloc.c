@@ -299,6 +299,15 @@ palloc_operation(PMEMobjpool *pop,
 	 */
 	if (off != 0) {
 		alloc = ALLOC_GET_HEADER(pop, off);
+
+		existing_block = get_mblock_from_alloc(pop, alloc);
+		/*
+		 * This lock must be held until the operation is processed
+		 * successfully, because other threads might operate on the
+		 * same bitmap value.
+		 */
+		MEMBLOCK_OPS(AUTO, &existing_block)->lock(&existing_block, pop);
+
 		/*
 		 * The memory block must return back to the originating bucket,
 		 * otherwise coalescing of neighbouring blocks will be rendered
@@ -312,7 +321,6 @@ palloc_operation(PMEMobjpool *pop,
 		 * this memory block.
 		 */
 		b = heap_get_chunk_bucket(pop, alloc->chunk_id, alloc->zone_id);
-		existing_block = get_mblock_from_alloc(pop, alloc);
 	}
 
 	/* if allocation or reallocation, reserve new memory */
@@ -362,13 +370,6 @@ palloc_operation(PMEMobjpool *pop,
 #endif /* DEBUG */
 
 		/*
-		 * This lock must be held until the operation is processed
-		 * successfully, because other threads might operate on the
-		 * same bitmap value.
-		 */
-		MEMBLOCK_OPS(AUTO, &existing_block)->lock(&existing_block, pop);
-
-		/*
 		 * This method will insert new entries into the operation
 		 * context which will, after processing, update the chunk
 		 * metadata to 'free' - it also takes care of all the necessary
@@ -411,11 +412,7 @@ palloc_operation(PMEMobjpool *pop,
 			 */
 			new_block = heap_free_block(pop, new_bucket,
 					new_block, NULL);
-			CNT_OP(new_bucket, insert, pop, new_block);
-
-			if (new_bucket->type == BUCKET_RUN)
-				heap_degrade_run_if_empty(pop,
-					new_bucket, new_block);
+			new_bucket->insert(pop, new_bucket, new_block);
 
 			ret = -1;
 			errno = ECANCELED;
@@ -499,13 +496,14 @@ palloc_operation(PMEMobjpool *pop,
 			 * whereas the existing block reflects the state from
 			 * before this operation started.
 			 */
-			CNT_OP(b, insert, pop, reclaimed_block);
+			b->insert(pop, b, reclaimed_block);
 #ifdef DEBUG
 			if (heap_block_is_allocated(pop, reclaimed_block)) {
 				ERR("heap corruption");
 				ASSERT(0);
 			}
 #endif /* DEBUG */
+		} else {
 			/*
 			 * Degrading of a run means turning it back into a chunk
 			 * in case it's no longer needed.
@@ -515,11 +513,8 @@ palloc_operation(PMEMobjpool *pop,
 			 * state as clean as possible - and that means not
 			 * leaving unused data around.
 			 */
-			if (b->type == BUCKET_RUN) {
-				heap_degrade_run_if_empty(pop, b,
-					reclaimed_block);
-				CTL_SIGNAL(allocator.after_run_degrade);
-			}
+			heap_degrade_run_if_empty(pop, reclaimed_block);
+			CTL_SIGNAL(allocator.after_run_degrade);
 		}
 	}
 

@@ -73,10 +73,7 @@ void heap_chunk_write_footer(PMEMobjpool *pop, struct chunk_header *hdr,
 
 int heap_get_bestfit_block(PMEMobjpool *pop, struct bucket *b,
 	struct memory_block *m);
-int heap_get_exact_block(PMEMobjpool *pop, struct bucket *b,
-	struct memory_block *m, uint32_t new_size_idx);
-void heap_degrade_run_if_empty(PMEMobjpool *pop, struct bucket *b,
-	struct memory_block m);
+void heap_degrade_run_if_empty(PMEMobjpool *pop, struct memory_block m);
 
 pthread_mutex_t *heap_get_run_lock(PMEMobjpool *pop, uint32_t chunk_id);
 
@@ -88,6 +85,15 @@ typedef int (*object_callback)(uint64_t off, void *arg);
 
 void heap_foreach_object(PMEMobjpool *pop, object_callback cb,
 	void *arg, struct memory_block start);
+
+uint8_t heap_create_alloc_class_buckets(PMEMobjpool *pop,
+	size_t unit_size, unsigned int unit_max);
+
+void heap_get_bucket_map(PMEMobjpool *pop, uint8_t *nvalues, uint8_t **map);
+void heap_set_bucket_map(PMEMobjpool *pop, uint8_t nvalues, uint8_t *map);
+
+void heap_register_active_run(PMEMobjpool *pop,
+	uint32_t chunk_id, uint32_t zone_id);
 
 #ifdef DEBUG
 int heap_block_is_allocated(PMEMobjpool *pop, struct memory_block m);

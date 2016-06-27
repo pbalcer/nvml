@@ -105,7 +105,7 @@ ctree_new()
 	return t;
 }
 
-#if	CTREE_FAST_RECURSIVE_DELETE
+#if CTREE_FAST_RECURSIVE_DELETE
 static void
 ctree_free_internal_recursive(void *dst)
 {
@@ -126,17 +126,22 @@ ctree_free_internal_recursive(void *dst)
 void
 ctree_delete(struct ctree *t)
 {
-#if	CTREE_FAST_RECURSIVE_DELETE
+	ctree_clear(t);
+
+	util_mutex_destroy(&t->lock);
+
+	Free(t);
+}
+
+void ctree_clear(struct ctree *t)
+{
+#if CTREE_FAST_RECURSIVE_DELETE
 	if (t->root)
 		ctree_free_internal_recursive(t->root);
 #else
 	while (t->root)
 		ctree_remove_unlocked(t, 0, 0);
 #endif
-
-	util_mutex_destroy(&t->lock);
-
-	Free(t);
 }
 
 /*
@@ -222,11 +227,8 @@ ctree_insert(struct ctree *t, uint64_t key, uint64_t value)
 	return ret;
 }
 
-/*
- * ctree_find_unlocked -- searches for an equal key in the tree
- */
-uint64_t
-ctree_find_unlocked(struct ctree *t, uint64_t key)
+static struct node_leaf *
+ctree_get_leaf(struct ctree *t, uint64_t key)
 {
 	struct node_leaf *dst = t->root;
 	struct node *a = NULL;
@@ -236,10 +238,36 @@ ctree_find_unlocked(struct ctree *t, uint64_t key)
 		dst = a->slots[BIT_IS_SET(key, a->diff)];
 	}
 
-	if (dst && dst->key == key)
-		return key;
-	else
-		return 0;
+	return dst && dst->key == key ? dst : NULL;
+}
+
+uint64_t *
+ctree_get_unlocked(struct ctree *t, uint64_t key)
+{
+	struct node_leaf *l = ctree_get_leaf(t, key);
+
+	return l ? &l->value : NULL;
+}
+
+uint64_t *
+ctree_get(struct ctree *t, uint64_t key)
+{
+	util_mutex_lock(&t->lock);
+	uint64_t *ret = ctree_get_unlocked(t, key);
+	util_mutex_unlock(&t->lock);
+
+	return ret;
+}
+
+/*
+ * ctree_find_unlocked -- searches for an equal key in the tree
+ */
+uint64_t
+ctree_find_unlocked(struct ctree *t, uint64_t key)
+{
+	struct node_leaf *l = ctree_get_leaf(t, key);
+
+	return l ? l->key : 0;
 }
 
 /*

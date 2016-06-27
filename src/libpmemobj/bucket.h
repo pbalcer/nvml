@@ -49,21 +49,17 @@ enum block_container_type {
 
 struct block_container {
 	enum block_container_type type;
-	size_t unit_size; /* required only for valgrind... */
 };
 
 struct block_container_ops {
-	int (*insert)(struct block_container *c, PMEMobjpool *pop,
-		struct memory_block m);
+	int (*insert)(struct block_container *c, struct memory_block m);
 	int (*get_rm_exact)(struct block_container *c, struct memory_block m);
 	int (*get_rm_bestfit)(struct block_container *c,
 		struct memory_block *m);
 	int (*get_exact)(struct block_container *c, struct memory_block m);
 	int (*is_empty)(struct block_container *c);
+	void (*clear)(struct block_container *c);
 };
-
-#define CNT_OP(_b, _op, ...)\
-(_b)->c_ops->_op((_b)->container, ##__VA_ARGS__)
 
 enum bucket_type {
 	BUCKET_UNKNOWN,
@@ -91,7 +87,12 @@ struct bucket {
 	pthread_mutex_t lock;
 
 	struct block_container *container;
-	struct block_container_ops *c_ops;
+
+	int (*insert)(PMEMobjpool *pop, struct bucket *b,
+		struct memory_block m);
+	int (*get_rm_exact)(struct bucket *b, struct memory_block m);
+	int (*get_rm_fit)(PMEMobjpool *pop, struct bucket *b,
+		struct memory_block *m);
 };
 
 struct bucket_huge {
@@ -121,6 +122,12 @@ struct bucket_run {
 	 * Maximum multiplication factor of unit_size for allocations.
 	 */
 	unsigned unit_max;
+
+	int nextfit_pos;
+	struct memory_block active;
+
+	int (*set_active)(struct bucket_run *run, struct memory_block m);
+	int (*remove_active)(struct bucket_run *run);
 };
 
 struct bucket *bucket_new(uint8_t id, enum bucket_type type,

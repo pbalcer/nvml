@@ -59,6 +59,8 @@
 #include "sync.h"
 #include "valgrind_internal.h"
 #include "ctl.h"
+#include "memblock.h"
+#include "heap.h"
 
 #define CTL_STR(name) #name
 
@@ -140,7 +142,8 @@ static const struct ctl_node CTL_NODE(, stats)[] = {
 	CTL_NODE_END
 };
 
-static int CTL_READ_HANDLER(debug, test_rw)(PMEMobjpool *pop, void *arg)
+static int
+CTL_READ_HANDLER(debug, test_rw)(PMEMobjpool *pop, void *arg)
 {
 	int *arg_rw = arg;
 	*arg_rw = 0;
@@ -148,7 +151,8 @@ static int CTL_READ_HANDLER(debug, test_rw)(PMEMobjpool *pop, void *arg)
 	return 0;
 }
 
-static int CTL_WRITE_HANDLER(debug, test_rw)(PMEMobjpool *pop, void *arg)
+static int
+CTL_WRITE_HANDLER(debug, test_rw)(PMEMobjpool *pop, void *arg)
 {
 	int *arg_rw = arg;
 	*arg_rw = 1;
@@ -156,7 +160,8 @@ static int CTL_WRITE_HANDLER(debug, test_rw)(PMEMobjpool *pop, void *arg)
 	return 0;
 }
 
-static int CTL_WRITE_HANDLER(debug, test_wo)(PMEMobjpool *pop, void *arg)
+static int
+CTL_WRITE_HANDLER(debug, test_wo)(PMEMobjpool *pop, void *arg)
 {
 	int *arg_wo = arg;
 	*arg_wo = 1;
@@ -164,7 +169,8 @@ static int CTL_WRITE_HANDLER(debug, test_wo)(PMEMobjpool *pop, void *arg)
 	return 0;
 }
 
-static int CTL_READ_HANDLER(debug, test_ro)(PMEMobjpool *pop, void *arg)
+static int
+CTL_READ_HANDLER(debug, test_ro)(PMEMobjpool *pop, void *arg)
 {
 	int *arg_ro = arg;
 	*arg_ro = 0;
@@ -197,6 +203,65 @@ static const struct ctl_node CTL_NODE(, debug)[] = {
 	CTL_LEAF_WO(debug, test_wo),
 	CTL_LEAF_RW(debug, test_rw),
 	CTL_CHILD(debug, traps),
+
+	CTL_NODE_END
+};
+
+struct ctl_heap_class_create_args {
+	struct {
+		size_t unit_size;
+		unsigned unit_max;
+	} in;
+
+	struct {
+		uint8_t id;
+	} out;
+};
+
+static int
+CTL_WRITE_HANDLER(heap_class, create)(PMEMobjpool *pop, void *arg)
+{
+	struct ctl_heap_class_create_args *args = arg;
+
+	args->out.id = heap_create_alloc_class_buckets(pop,
+			args->in.unit_size, args->in.unit_max);
+
+	return 0;
+}
+
+struct ctl_heap_class_map_args {
+	uint8_t *map;
+	uint8_t nvalues;
+};
+
+static int
+CTL_WRITE_HANDLER(heap_class, map)(PMEMobjpool *pop, void *arg)
+{
+	struct ctl_heap_class_map_args *args = arg;
+	heap_set_bucket_map(pop, args->nvalues, args->map);
+
+	return 0;
+}
+
+static int
+CTL_READ_HANDLER(heap_class, map)(PMEMobjpool *pop, void *arg)
+{
+	struct ctl_heap_class_map_args *args = arg;
+	heap_get_bucket_map(pop, &args->nvalues, &args->map);
+
+	return 0;
+}
+
+static const struct ctl_node CTL_NODE(heap, class)[] = {
+	CTL_LEAF_WO(heap_class, create),
+	CTL_LEAF_RW(heap_class, map),
+
+	CTL_NODE_END
+};
+
+static const struct ctl_node CTL_NODE(, heap)[] = {
+	CTL_CHILD(heap, class),
+
 	CTL_NODE_END
 };
 
@@ -218,6 +283,7 @@ static const struct ctl_node ctl_root[] = {
 	CTL_CHILD(, debug),
 
 	CTL_CHILD(, stats),
+	CTL_CHILD(, heap),
 	CTL_NODE_END
 };
 

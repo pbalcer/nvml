@@ -55,13 +55,11 @@
 #include "sys_util.h"
 #include "valgrind_internal.h"
 #include "ctl.h"
+#include "ctree.h"
 
 #define MAX_RUN_LOCKS 1024
 
 #define USE_PER_THREAD_BUCKETS
-
-#define EMPTY_MEMORY_BLOCK (struct memory_block)\
-{0, 0, 0, 0}
 
 #define NCACHES_PER_CPU	2
 
@@ -116,7 +114,6 @@ static struct {
 struct active_run {
 	uint32_t chunk_id;
 	uint32_t zone_id;
-	SLIST_ENTRY(active_run) run;
 };
 
 struct bucket_cache {
@@ -126,9 +123,11 @@ struct bucket_cache {
 struct pmalloc_heap {
 	struct bucket *default_bucket;
 	struct bucket *buckets[MAX_BUCKETS];
+
 	/* runs are lazy-loaded, removed from this list on-demand */
-	SLIST_HEAD(arun, active_run) active_runs[MAX_BUCKETS];
+	struct ctree *active_runs[MAX_BUCKETS];
 	pthread_mutex_t active_run_lock;
+
 	uint8_t *bucket_map;
 	pthread_mutex_t run_locks[MAX_RUN_LOCKS];
 	unsigned max_zone;
@@ -331,7 +330,7 @@ heap_run_insert(PMEMobjpool *pop, struct bucket *b, uint32_t chunk_id,
 		m.size_idx = size_idx;
 
 	do {
-		CNT_OP(b, insert, pop, m);
+		b->insert(pop, b, m);
 		ASSERT(m.size_idx <= UINT16_MAX);
 		ASSERT(m.block_off + m.size_idx <= UINT16_MAX);
 		m.block_off = (uint16_t)(m.block_off + (uint16_t)m.size_idx);
@@ -438,7 +437,12 @@ heap_create_run(PMEMobjpool *pop, struct bucket *b,
 	VALGRIND_DO_MAKE_MEM_UNDEFINED(pop, run, sizeof(*run));
 	heap_set_run_bucket(run, b);
 	heap_init_run(pop, b, hdr, run);
-	heap_process_run_metadata(pop, b, run, chunk_id, zone_id);
+
+	ASSERTeq(b->type, BUCKET_RUN);
+	struct bucket_run *r = (struct bucket_run *)b;
+
+	struct memory_block m = {chunk_id, zone_id, r->bitmap_nallocs, 0};
+	r->set_active(r, m);
 }
 
 /*
@@ -510,10 +514,12 @@ heap_find_first_free_bucket_slot(struct pmalloc_heap *h)
  * heap_create_alloc_class_buckets -- (internal) allocates both auxiliary and
  *	cache bucket instances of the specified type
  */
-static uint8_t
-heap_create_alloc_class_buckets(struct pmalloc_heap *h,
+uint8_t
+heap_create_alloc_class_buckets(PMEMobjpool *pop,
 	size_t unit_size, unsigned int unit_max)
 {
+	struct pmalloc_heap *h = pop->heap;
+
 	uint8_t slot = heap_find_first_free_bucket_slot(h);
 	if (slot == MAX_BUCKETS)
 		goto out;
@@ -554,11 +560,26 @@ error_bucket_new:
  *	bucket allocation class
  */
 static void
-heap_register_bucket_range(struct pmalloc_heap *h, uint8_t bucket,
+heap_register_bucket_range(PMEMobjpool *pop, uint8_t bucket,
 	size_t start, size_t end)
 {
 	for (; start <= end; ++start)
-		h->bucket_map[start] = bucket;
+		pop->heap->bucket_map[start] = bucket;
+}
+
+void
+heap_get_bucket_map(PMEMobjpool *pop, uint8_t *nvalues, uint8_t **map)
+{
+	*nvalues = (uint8_t)pop->heap->last_run_max_size / ALLOC_BLOCK_SIZE;
+	*map = pop->heap->bucket_map;
+}
+
+void
+heap_set_bucket_map(PMEMobjpool *pop, uint8_t nvalues, uint8_t *map)
+{
+	pop->heap->last_run_max_size = (size_t)nvalues * ALLOC_BLOCK_SIZE;
+	Free(pop->heap->bucket_map);
+	pop->heap->bucket_map = map;
 }
 
 /*
@@ -567,9 +588,11 @@ heap_register_bucket_range(struct pmalloc_heap *h, uint8_t bucket,
  *	for allocations with the given unit size.
  */
 static uint8_t
-heap_get_create_bucket_idx_by_unit_size(struct pmalloc_heap *h,
+heap_get_create_bucket_idx_by_unit_size(PMEMobjpool *pop,
 	uint64_t unit_size)
 {
+	struct pmalloc_heap *h = pop->heap;
+
 	uint8_t bucket_idx = SIZE_TO_BID(h, unit_size);
 	if (h->buckets[bucket_idx]->unit_size != unit_size) {
 		/*
@@ -579,7 +602,7 @@ heap_get_create_bucket_idx_by_unit_size(struct pmalloc_heap *h,
 		 * the pool. Normally all the buckets are created at
 		 * initialization time.
 		 */
-		bucket_idx = heap_create_alloc_class_buckets(h, unit_size,
+		bucket_idx = heap_create_alloc_class_buckets(pop, unit_size,
 			RUN_UNIT_MAX);
 
 		if (unit_size == MAX_BUCKETS) {
@@ -596,25 +619,36 @@ heap_get_create_bucket_idx_by_unit_size(struct pmalloc_heap *h,
 		 * will get freed.
 		 */
 		size_t supported_block = unit_size / ALLOC_BLOCK_SIZE;
-		heap_register_bucket_range(h, bucket_idx,
+		heap_register_bucket_range(pop, bucket_idx,
 			supported_block, supported_block);
 	}
 
 	return bucket_idx;
 }
 
+#define RUN_KEY_PACK(z, c)\
+((uint64_t)(z) << 32 | (uint64_t)(c))
+
+#define RUN_KEY_GET_CHUNK_ID(k)\
+((uint32_t)((k & 0xFFFFFFFF)))
+
+#define RUN_KEY_GET_ZONE_ID(k)\
+((uint32_t)((k & 0xFFFFFFFF00000000)))
+
 /*
  * heap_register_active_run -- (internal) inserts a run for eventual reuse
  */
-static void
-heap_register_active_run(struct pmalloc_heap *h, struct chunk_run *run,
-	uint32_t chunk_id, uint32_t zone_id)
+void
+heap_register_active_run(PMEMobjpool *pop, uint32_t chunk_id, uint32_t zone_id)
 {
-	/* reset the volatile state of the run */
-	run->bucket_vptr = 0;
-	VALGRIND_SET_CLEAN(&run->bucket_vptr, sizeof(run->bucket_vptr));
+	struct zone *z = ZID_TO_ZONE(pop->hlayout, zone_id);
 
-	if (heap_run_is_empty(run))
+	struct chunk_run *r = (struct chunk_run *)&z->chunks[chunk_id];
+	/* reset the volatile state of the run */
+	r->bucket_vptr = 0;
+	VALGRIND_SET_CLEAN(&r->bucket_vptr, sizeof(r->bucket_vptr));
+
+	if (heap_run_is_empty(r))
 		return;
 
 	struct active_run *arun = Malloc(sizeof(*arun));
@@ -625,10 +659,15 @@ heap_register_active_run(struct pmalloc_heap *h, struct chunk_run *run,
 	}
 	arun->chunk_id = chunk_id;
 	arun->zone_id = zone_id;
+	uint8_t bucket_idx = heap_get_create_bucket_idx_by_unit_size(pop,
+		r->block_size);
 
-	uint8_t bucket_idx = heap_get_create_bucket_idx_by_unit_size(h,
-		run->block_size);
-	SLIST_INSERT_HEAD(&h->active_runs[bucket_idx], arun, run);
+	ctree_insert(pop->heap->active_runs[bucket_idx],
+		RUN_KEY_PACK(arun->zone_id, arun->chunk_id), 0);
+
+#if 0
+	SLIST_INSERT_HEAD(&pop->heap->active_runs[bucket_idx], arun, run);
+#endif
 }
 
 /*
@@ -656,7 +695,6 @@ heap_populate_buckets(PMEMobjpool *pop)
 
 	struct bucket *def_bucket = h->default_bucket;
 
-	struct chunk_run *run = NULL;
 	struct memory_block m = {0, zone_id, 0, 0};
 	for (uint32_t i = 0; i < z->header.size_idx; ) {
 		struct chunk_header *hdr = &z->chunk_headers[i];
@@ -665,13 +703,12 @@ heap_populate_buckets(PMEMobjpool *pop)
 
 		switch (hdr->type) {
 			case CHUNK_TYPE_RUN:
-				run = (struct chunk_run *)&z->chunks[i];
-				heap_register_active_run(h, run, i, zone_id);
+				heap_register_active_run(pop, i, zone_id);
 				break;
 			case CHUNK_TYPE_FREE:
 				m.chunk_id = i;
 				m.size_idx = hdr->size_idx;
-				CNT_OP(def_bucket, insert, pop, m);
+				def_bucket->insert(pop, def_bucket, m);
 				break;
 			case CHUNK_TYPE_USED:
 				break;
@@ -693,21 +730,16 @@ heap_get_active_run(struct pmalloc_heap *h, int bucket_idx,
 	struct memory_block *m)
 {
 	util_mutex_lock(&h->active_run_lock);
-
 	int ret = 0;
 
-	struct active_run *arun = SLIST_FIRST(&h->active_runs[bucket_idx]);
-	if (arun == NULL)
+	uint64_t key;
+	if ((key = ctree_remove(h->active_runs[bucket_idx], 0, 0)) == 0) {
+		ret = -1;
 		goto out;
+	}
 
-	SLIST_REMOVE_HEAD(&h->active_runs[bucket_idx], run);
-
-	m->chunk_id = arun->chunk_id;
-	m->zone_id = arun->zone_id;
-
-	ret = 1;
-
-	Free(arun);
+	m->chunk_id = RUN_KEY_GET_CHUNK_ID(key);
+	m->zone_id = RUN_KEY_GET_ZONE_ID(key);
 
 out:
 	util_mutex_unlock(&h->active_run_lock);
@@ -739,7 +771,13 @@ heap_ensure_bucket_filled(PMEMobjpool *pop, struct bucket *b)
 	struct pmalloc_heap *h = pop->heap;
 	struct memory_block m = {0, 0, 1, 0};
 
-	if (!heap_get_active_run(h, b->id, &m)) {
+	struct bucket_run *r = (struct bucket_run *)b;
+	if (r->active.size_idx != 0) {
+		heap_register_active_run(pop, r->active.chunk_id, r->active.zone_id);
+		r->remove_active(r);
+	}
+
+	if (heap_get_active_run(h, b->id, &m) != 0) {
 		/* cannot reuse an existing run, create a new one */
 		struct bucket *def_bucket = heap_get_default_bucket(pop);
 
@@ -823,7 +861,7 @@ static struct bucket *
 heap_assign_run_bucket(PMEMobjpool *pop, struct chunk_run *run,
 	uint32_t chunk_id, uint32_t zone_id)
 {
-	uint8_t bucket_idx = heap_get_create_bucket_idx_by_unit_size(pop->heap,
+	uint8_t bucket_idx = heap_get_create_bucket_idx_by_unit_size(pop,
 		run->block_size);
 
 	/*
@@ -935,9 +973,6 @@ heap_drain_to_auxiliary(PMEMobjpool *pop, struct bucket *auxb,
 		 * to degrade empty runs.
 		 */
 		while (drained_cache < units_per_bucket) {
-			if (CNT_OP(b, is_empty))
-				break;
-
 			/*
 			 * Take only the memory blocks that can satisfy
 			 * the memory requests.
@@ -945,11 +980,11 @@ heap_drain_to_auxiliary(PMEMobjpool *pop, struct bucket *auxb,
 			m = EMPTY_MEMORY_BLOCK;
 			m.size_idx = size_idx;
 
-			if (CNT_OP(b, get_rm_bestfit, &m) != 0)
+			if (b->get_rm_fit(pop, b, &m) != 0)
 				break;
 
 			drained_cache += m.size_idx;
-			CNT_OP(auxb, insert, pop, m);
+			auxb->insert(pop, auxb, m);
 		}
 
 		util_mutex_unlock(&b->lock);
@@ -963,8 +998,10 @@ heap_drain_to_auxiliary(PMEMobjpool *pop, struct bucket *auxb,
  *	bucket allocation class for which unit_size is evenly divisible by n.
  */
 static uint8_t
-heap_find_or_create_best_alloc_class(struct pmalloc_heap *h, size_t n)
+heap_find_or_create_best_alloc_class(PMEMobjpool *pop, size_t n)
 {
+	struct pmalloc_heap *h = pop->heap;
+
 	COMPILE_ERROR_ON(MAX_BUCKETS > UINT8_MAX);
 
 	for (int i = MAX_BUCKETS - 1; i >= 0; --i) {
@@ -985,7 +1022,7 @@ heap_find_or_create_best_alloc_class(struct pmalloc_heap *h, size_t n)
 		n += ALLOC_BLOCK_SIZE;
 	}
 
-	return heap_create_alloc_class_buckets(h, n, RUN_UNIT_MAX);
+	return heap_create_alloc_class_buckets(pop, n, RUN_UNIT_MAX);
 }
 
 /*
@@ -998,7 +1035,7 @@ heap_buckets_init(PMEMobjpool *pop)
 	size_t i;
 
 	for (i = 0; i < MAX_BUCKETS; ++i)
-		SLIST_INIT(&h->active_runs[i]);
+		h->active_runs[i] = ctree_new();
 
 	h->last_run_max_size = MAX_RUN_SIZE;
 	h->bucket_map = Malloc((MAX_RUN_SIZE / ALLOC_BLOCK_SIZE) + 1);
@@ -1018,23 +1055,23 @@ heap_buckets_init(PMEMobjpool *pop)
 	 * is left unused.
 	 */
 	size_t size = 0;
-	uint8_t slot = heap_create_alloc_class_buckets(h,
+	uint8_t slot = heap_create_alloc_class_buckets(pop,
 		MIN_RUN_SIZE, RUN_UNIT_MAX);
 	if (slot == MAX_BUCKETS)
 		goto error_bucket_create;
 
-	heap_register_bucket_range(h, slot, 0, 2);
+	heap_register_bucket_range(pop, slot, 0, 2);
 
 	for (int c = 1; c < MAX_ALLOC_CATEGORIES; ++c) {
 		for (size_t i = categories[c - 1].size + 1;
 			i <= categories[c].size; i += categories[c].step) {
 
 			size = i + (categories[c].step - 1);
-			if ((slot = heap_find_or_create_best_alloc_class(h,
+			if ((slot = heap_find_or_create_best_alloc_class(pop,
 				size * ALLOC_BLOCK_SIZE)) == MAX_BUCKETS)
 				goto error_bucket_create;
 
-			heap_register_bucket_range(h, slot, i, size);
+			heap_register_bucket_range(pop, slot, i, size);
 		}
 	}
 
@@ -1058,7 +1095,7 @@ heap_buckets_init(PMEMobjpool *pop)
 	h->last_run_max_size = MAX_RUN_SIZE > theoretical_run_max_size ?
 		theoretical_run_max_size : MAX_RUN_SIZE;
 
-	heap_register_bucket_range(h, slot, size,
+	heap_register_bucket_range(pop, slot, size,
 		h->last_run_max_size / ALLOC_BLOCK_SIZE);
 
 	heap_populate_buckets(pop);
@@ -1097,7 +1134,7 @@ heap_resize_chunk(PMEMobjpool *pop,
 
 	struct bucket *def_bucket = pop->heap->default_bucket;
 	struct memory_block m = {new_chunk_id, zone_id, rem_size_idx, 0};
-	CNT_OP(def_bucket, insert, pop, m);
+	def_bucket->insert(pop, def_bucket, m);
 }
 
 /*
@@ -1112,7 +1149,7 @@ heap_recycle_block(PMEMobjpool *pop, struct bucket *b, struct memory_block *m,
 		ASSERT(m->block_off + units <= UINT16_MAX);
 		struct memory_block r = {m->chunk_id, m->zone_id,
 			m->size_idx - units, (uint16_t)(m->block_off + units)};
-		CNT_OP(b, insert, pop, r);
+		b->insert(pop, b, r);
 	} else {
 		heap_resize_chunk(pop, m->chunk_id, m->zone_id, units);
 	}
@@ -1133,7 +1170,7 @@ heap_get_bestfit_block(PMEMobjpool *pop, struct bucket *b,
 	uint32_t units = m->size_idx;
 	int ret = 0;
 
-	while (CNT_OP(b, get_rm_bestfit, m) != 0) {
+	while (b->get_rm_fit(pop, b, m) != 0) {
 		if ((ret = heap_ensure_bucket_filled(pop, b)) != 0) {
 			goto out;
 		}
@@ -1148,30 +1185,6 @@ out:
 	util_mutex_unlock(&b->lock);
 
 	return ret;
-}
-
-/*
- * heap_get_exact_block --
- *	extracts exactly this memory block and cuts it accordingly
- */
-int
-heap_get_exact_block(PMEMobjpool *pop, struct bucket *b,
-	struct memory_block *m, uint32_t units)
-{
-	util_mutex_lock(&b->lock);
-
-	int ret = 0;
-	if ((ret = CNT_OP(b, get_rm_exact, *m)) != 0) {
-		goto out;
-	}
-
-	if (units != m->size_idx)
-		heap_recycle_block(pop, b, m, units);
-
-out:
-	util_mutex_unlock(&b->lock);
-
-	return 0;
 }
 
 /*
@@ -1372,13 +1385,13 @@ heap_free_block(PMEMobjpool *pop, struct bucket *b,
 
 	struct memory_block prev = {0, 0, 0, 0};
 	if (heap_get_adjacent_free_block(pop, b, &prev, m, 1) == 0 &&
-		CNT_OP(b, get_rm_exact, prev) == 0) {
+		b->get_rm_exact(b, prev) == 0) {
 		blocks[0] = &prev;
 	}
 
 	struct memory_block next = {0, 0, 0, 0};
 	if (heap_get_adjacent_free_block(pop, b, &next, m, 0) == 0 &&
-		CNT_OP(b, get_rm_exact, next) == 0) {
+		b->get_rm_exact(b, next) == 0) {
 		blocks[2] = &next;
 	}
 
@@ -1389,51 +1402,17 @@ heap_free_block(PMEMobjpool *pop, struct bucket *b,
 }
 
 /*
- * traverse_bucket_run -- (internal) traverses each memory block of a run
- */
-static int
-traverse_bucket_run(struct bucket *b, struct memory_block m,
-	int (*cb)(struct block_container *b, struct memory_block m))
-{
-	ASSERTeq(b->type, BUCKET_RUN);
-	struct bucket_run *r = (struct bucket_run *)b;
-
-	m.block_off = 0;
-	m.size_idx = r->unit_max;
-	uint32_t size_idx_sum = 0;
-
-	while (size_idx_sum != r->bitmap_nallocs) {
-		if (cb(b->container, m) != 0)
-			return 1;
-
-		size_idx_sum += m.size_idx;
-
-		ASSERT((uint32_t)m.block_off + r->unit_max <= UINT16_MAX);
-		m.block_off = (uint16_t)(m.block_off + r->unit_max);
-		if (m.block_off + r->unit_max > r->bitmap_nallocs)
-			m.size_idx = r->bitmap_nallocs - m.block_off;
-		else
-			m.size_idx = r->unit_max;
-	}
-
-	return 0;
-}
-
-/*
  * heap_degrade_run_if_empty -- makes a chunk out of an empty run
  */
 void
-heap_degrade_run_if_empty(PMEMobjpool *pop, struct bucket *b,
-	struct memory_block m)
+heap_degrade_run_if_empty(PMEMobjpool *pop, struct memory_block m)
 {
 	struct zone *z = ZID_TO_ZONE(pop->hlayout, m.zone_id);
 	struct chunk_header *hdr = &z->chunk_headers[m.chunk_id];
 	ASSERT(hdr->type == CHUNK_TYPE_RUN);
 
-	struct chunk_run *run = (struct chunk_run *)&z->chunks[m.chunk_id];
-
-	ASSERTeq(b->type, BUCKET_RUN);
-	struct bucket_run *r = (struct bucket_run *)b;
+	/* XXX !!!! */
+	return;
 
 	/*
 	 * The redo log ptr can be NULL if we are sure that there's only one
@@ -1442,8 +1421,9 @@ heap_degrade_run_if_empty(PMEMobjpool *pop, struct bucket *b,
 	struct operation_context ctx;
 	operation_init(pop, &ctx, NULL);
 
-	util_mutex_lock(&b->lock);
 	MEMBLOCK_OPS(RUN, &m)->lock(&m, pop);
+#if 0
+	struct chunk_run *run = (struct chunk_run *)&z->chunks[m.chunk_id];
 
 	unsigned i;
 	unsigned nval = r->bitmap_nval;
@@ -1453,19 +1433,7 @@ heap_degrade_run_if_empty(PMEMobjpool *pop, struct bucket *b,
 
 	if (run->bitmap[i] != r->bitmap_lastval)
 		goto out;
-
-	if (traverse_bucket_run(b, m, b->c_ops->get_exact) != 0) {
-		/*
-		 * The memory block is in the active run list or in a
-		 * different bucket, there's not much we can do here
-		 * right now. It will get freed later anyway.
-		 */
-		goto out;
-	}
-
-	if (traverse_bucket_run(b, m, b->c_ops->get_rm_exact) != 0) {
-		FATAL("Persistent/volatile state mismatch");
-	}
+#endif
 
 	struct bucket *defb = heap_get_default_bucket(pop);
 	util_mutex_lock(&defb->lock);
@@ -1477,13 +1445,12 @@ heap_degrade_run_if_empty(PMEMobjpool *pop, struct bucket *b,
 	struct memory_block fm = heap_free_block(pop, defb, m, &ctx);
 	operation_process(&ctx);
 
-	CNT_OP(defb, insert, pop, fm);
+	defb->insert(pop, defb, fm);
 
 	util_mutex_unlock(&defb->lock);
 
-out:
+//out:
 	MEMBLOCK_OPS(RUN, &m)->unlock(&m, pop);
-	util_mutex_unlock(&b->lock);
 }
 
 #ifdef USE_VG_MEMCHECK
@@ -1740,12 +1707,8 @@ heap_cleanup(PMEMobjpool *pop)
 
 	util_mutex_destroy(&pop->heap->active_run_lock);
 
-	struct active_run *r;
 	for (int i = 0; i < MAX_BUCKETS; ++i) {
-		while ((r = SLIST_FIRST(&pop->heap->active_runs[i])) != NULL) {
-			SLIST_REMOVE_HEAD(&pop->heap->active_runs[i], run);
-			Free(r);
-		}
+		ctree_delete(pop->heap->active_runs[i]);
 	}
 
 	Free(pop->heap);

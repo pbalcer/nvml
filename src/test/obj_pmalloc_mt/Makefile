@@ -41,12 +41,13 @@ vpath %.c $(TOP)/src/common
 TARGET = obj_pmalloc_mt
 OBJS = obj_pmalloc_mt.o pmalloc.o bucket.o redo.o heap.o lane.o ctree.o\
     util.o util_linux.o set.o set_linux.o out.o obj.o cuckoo.o\
-    list.o sync.o tx.o memops.o libpmemobj.o memblock.o pvector.o ctl.o
+    list.o sync.o tx.o memops.o libpmemobj.o memblock.o pvector.o ctl.o container_ctree.o
 
 LIBPMEM=y
 
 out.o: CFLAGS += -DSRCVERSION=\"utversion\"
 
+#EXTRA_CFLAGS=-O3
 include ../Makefile.inc
 
 INCS += -I$(TOP)/src/libpmemobj/ -I$(TOP)/src/common/
