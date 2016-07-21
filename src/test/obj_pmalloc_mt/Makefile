@@ -47,7 +47,7 @@ LIBPMEM=y
 
 out.o: CFLAGS += -DSRCVERSION=\"utversion\"
 
-#EXTRA_CFLAGS=-O3
+EXTRA_CFLAGS=-O2
 include ../Makefile.inc
 
 INCS += -I$(TOP)/src/libpmemobj/ -I$(TOP)/src/common/

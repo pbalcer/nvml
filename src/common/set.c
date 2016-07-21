@@ -190,6 +190,22 @@ util_map_part(struct pool_set_part *part, void *addr, size_t size,
 	return 0;
 }
 
+
+
+/*
+ * util_replica_force_page_allocation - (internal) forces page allocation for
+ * replica
+ */
+static void
+util_replica_force_page_allocation(struct pool_replica *rep)
+{
+	volatile char *cur_addr = rep->part[0].addr;
+	char *addr_end = (char *)cur_addr + rep->part[0].size;
+	for (; cur_addr < addr_end; cur_addr += Pagesize)
+		*cur_addr = *cur_addr;
+}
+
+
 /*
  * util_unmap_part -- (internal) unmap a part of a pool set
  */
@@ -1397,7 +1413,7 @@ util_replica_create(struct pool_set *set, unsigned repidx, int flags,
 	}
 
 	rep->is_pmem = pmem_is_pmem(rep->part[0].addr, rep->part[0].size);
-
+	util_replica_force_page_allocation(rep);
 	ASSERTeq(mapsize, rep->repsize);
 
 	LOG(3, "replica addr %p", rep->part[0].addr);
@@ -1686,7 +1702,7 @@ util_replica_open(struct pool_set *set, unsigned repidx, int flags)
 	}
 
 	rep->is_pmem = pmem_is_pmem(rep->part[0].addr, rep->part[0].size);
-
+	util_replica_force_page_allocation(rep);
 	ASSERTeq(mapsize, rep->repsize);
 
 	/* calculate pool size - choose the smallest replica size */

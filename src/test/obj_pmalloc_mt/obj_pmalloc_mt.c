@@ -41,11 +41,11 @@
 #include "pmalloc.h"
 #include "unittest.h"
 
-#define THREADS 1
-#define OPS_PER_THREAD 100000ULL
+#define THREADS 8
+#define OPS_PER_THREAD 10000000ULL
 #define ALLOC_SIZE 60
 #define REALLOC_SIZE (ALLOC_SIZE * 3)
-#define FRAGMENTATION 2
+#define FRAGMENTATION 2.5
 #define MIX_RERUNS 2
 
 struct root {
@@ -200,6 +200,7 @@ main(int argc, char *argv[])
 		args[i].r = r;
 		args[i].idx = i;
 	}
+#if 0
 #define N 100
 	PMEMoid stuffs[N];
 	for (int i = 0; i < N; ++i) {
@@ -216,15 +217,15 @@ main(int argc, char *argv[])
 		pmemobj_alloc(pop, &stuffs[i], 15360, 0, 0, 0);
 		printf("%lu\n", stuffs[i].off);
 	}
-
-if(0){	struct timespec tstart={0,0}, tend={0,0};
+#endif
+struct timespec tstart={0,0}, tend={0,0};
         clock_gettime(CLOCK_MONOTONIC, &tstart);
 	run_worker(alloc_worker, args);
 	clock_gettime(CLOCK_MONOTONIC, &tend);
         printf("alloc %.5f s\n",
                ((double)tend.tv_sec + 1.0e-9*tend.tv_nsec) -
                ((double)tstart.tv_sec + 1.0e-9*tstart.tv_nsec));
-	run_worker(realloc_worker, args);
+if(0){	run_worker(realloc_worker, args);
 	run_worker(free_worker, args);
 	run_worker(mix_worker, args);
 	run_worker(tx_worker, args);
