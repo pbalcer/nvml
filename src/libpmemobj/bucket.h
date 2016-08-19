@@ -52,6 +52,7 @@
 enum block_container_type {
 	CONTAINER_UNKNOWN,
 	CONTAINER_CTREE,
+	CONTAINER_TLSF,
 
 	MAX_CONTAINER_TYPE
 };

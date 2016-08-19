@@ -1507,6 +1507,8 @@ void
 heap_degrade_run_if_empty(struct palloc_heap *heap,
 		struct bucket *b, struct memory_block m)
 {
+	return;
+
 	struct zone *z = ZID_TO_ZONE(heap->layout, m.zone_id);
 	struct chunk_header *hdr = &z->chunk_headers[m.chunk_id];
 	ASSERT(hdr->type == CHUNK_TYPE_RUN);

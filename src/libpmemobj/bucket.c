@@ -244,6 +244,158 @@ bucket_tree_delete(struct block_container *bc)
 	Free(bc);
 }
 
+/* -------------------------------------------------------------------------- */
+#include <sys/queue.h>
+
+struct tlsf_entry {
+	struct memory_block m;
+	SLIST_ENTRY(tlsf_entry) entry;
+};
+
+#define TLSF_BLOCK_ARRAYS (RUN_UNIT_MAX+1)
+
+struct block_container_tlsf {
+	struct block_container super;
+	SLIST_HEAD(, tlsf_entry) blocks[TLSF_BLOCK_ARRAYS];
+	uint64_t nonempty_lists;
+};
+
+/*
+ * bucket_tree_insert_block -- (internal) inserts a new memory block
+ *	into the container
+ */
+static int
+tlsf_insert_block(struct block_container *bc, struct palloc_heap *heap,
+	struct memory_block m)
+{
+	ASSERT(m.chunk_id < MAX_CHUNK);
+	ASSERT(m.zone_id < UINT16_MAX);
+	ASSERTne(m.size_idx, 0);
+
+	struct block_container_tlsf *c = (struct block_container_tlsf *)bc;
+
+#ifdef USE_VG_MEMCHECK
+	bucket_vg_mark_noaccess(heap, bc, m);
+#endif
+	ASSERT(m.size_idx < TLSF_BLOCK_ARRAYS);
+
+	struct tlsf_entry *e = heap_get_block_data(heap, m);
+	e->m = m;
+	SLIST_INSERT_HEAD(&c->blocks[m.size_idx], e, entry);
+
+	c->nonempty_lists |= 1ULL << (m.size_idx - 1);
+
+	return 0;
+}
+
+/*
+ * bucket_tree_get_rm_block_bestfit -- (internal) removes and returns the
+ *	best-fit memory block for size
+ */
+static int
+tlsf_get_rm_block_bestfit(struct block_container *bc,
+	struct memory_block *m)
+{
+	struct block_container_tlsf *c = (struct block_container_tlsf *)bc;
+
+	ASSERT(m->size_idx < TLSF_BLOCK_ARRAYS);
+	uint32_t i = 0;
+
+	/* applicable lists */
+	uint64_t v = c->nonempty_lists & (~((uint64_t)m->size_idx - 1));
+	if (v == 0)
+		return ENOMEM;
+	i = (uint32_t)__builtin_ffsl((long int)v);
+
+	struct tlsf_entry *e = SLIST_FIRST(&c->blocks[i]);
+	SLIST_REMOVE_HEAD(&c->blocks[i], entry);
+	if (SLIST_EMPTY(&c->blocks[i])) {
+		c->nonempty_lists &= ~(1ULL << (i - 1));
+	}
+
+	*m = e->m;
+
+	return 0;
+}
+
+/*
+ * bucket_tree_get_rm_block_exact -- (internal) removes exact match memory block
+ */
+static int
+tlsf_get_rm_block_exact(struct block_container *bc,
+	struct memory_block m)
+{
+
+	return -1;
+}
+
+/*
+ * bucket_tree_get_block_exact -- (internal) finds exact match memory block
+ */
+static int
+tlsf_get_block_exact(struct block_container *bc, struct memory_block m)
+{
+	return -1;
+}
+
+/*
+ * bucket_tree_is_empty -- (internal) checks whether the bucket is empty
+ */
+static int
+tlsf_is_empty(struct block_container *bc)
+{
+	return 0;
+}
+
+/*
+ * Tree-based block container used to provide best-fit functionality to the
+ * bucket. The time complexity for this particular container is O(k) where k is
+ * the length of the key.
+ *
+ * The get methods also guarantee that the block with lowest possible address
+ * that best matches the requirements is provided.
+ */
+static struct block_container_ops container_tlsf_ops = {
+	.insert = tlsf_insert_block,
+	.get_rm_exact = tlsf_get_rm_block_exact,
+	.get_rm_bestfit = tlsf_get_rm_block_bestfit,
+	.get_exact = tlsf_get_block_exact,
+	.is_empty = tlsf_is_empty
+};
+
+/*
+ * bucket_tree_create -- (internal) creates a new tree-based container
+ */
+static struct block_container *
+tlsf_create(size_t unit_size)
+{
+	struct block_container_tlsf *bc = Malloc(sizeof(*bc));
+	if (bc == NULL)
+		goto error_container_malloc;
+
+	bc->super.type = CONTAINER_CTREE;
+	bc->super.unit_size = unit_size;
+
+	for (uint32_t i = 0; i < TLSF_BLOCK_ARRAYS; ++i)
+		SLIST_INIT(&bc->blocks[i]);
+
+	bc->nonempty_lists = 0;
+
+	return &bc->super;
+
+error_container_malloc:
+	return NULL;
+}
+
+/*
+ * bucket_tree_delete -- (internal) deletes a tree container
+ */
+static void
+tlsf_delete(struct block_container *bc)
+{
+	Free(bc);
+}
+
 static struct {
 	struct block_container_ops *ops;
 	struct block_container *(*create)(size_t unit_size);
@@ -251,6 +403,7 @@ static struct {
 } block_containers[MAX_CONTAINER_TYPE] = {
 	{NULL, NULL, NULL},
 	{&container_ctree_ops, bucket_tree_create, bucket_tree_delete},
+	{&container_tlsf_ops, tlsf_create, tlsf_delete},
 };
 
 /*

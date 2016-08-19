@@ -185,8 +185,9 @@ extract_funcs = $(shell \
 
 INCS += -I../unittest -I$(TOP)/src/include
 
-COMMON_FLAGS  = -ggdb
-COMMON_FLAGS += -Wall
+#COMMON_FLAGS  = -ggdb
+#COMMON_FLAGS += -Wall
+COMMON_FLAGS += -O2
 COMMON_FLAGS += -Werror
 COMMON_FLAGS += -Wpointer-arith
 COMMON_FLAGS += -Wunused-macros
