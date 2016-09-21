@@ -40,3 +40,7 @@ int device_dax_is_dax(const char *path);
 ssize_t device_dax_size(const char *path);
 int device_dax_zero(const char *path);
 void *device_dax_map(const char *path);
+ssize_t device_dax_pwrite(const char *path, const void *buffer, size_t size,
+		off_t offset);
+ssize_t device_dax_pread(const char *path, void *buffer, size_t size,
+		off_t offset);

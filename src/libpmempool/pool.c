@@ -56,6 +56,7 @@
 #include "file.h"
 #include "set.h"
 #include "check_util.h"
+#include "device_dax.h"
 
 /* arbitrary size of a maximum file part being read / write at once */
 #define RW_BUFFERING_SIZE (128 * 1024 * 1024)
@@ -868,20 +869,28 @@ pool_set_type(struct pool_set *set)
 
 	/* open the first part file to read the pool header values */
 	const struct pool_set_part *part = &PART(REP(set, 0), 0);
-	int fdp = util_file_open(part->path, NULL, 0, O_RDONLY);
-	if (fdp < 0) {
-		ERR("cannot open poolset part file");
-		return POOL_TYPE_UNKNOWN;
-	}
 
 	/* read the pool header from first pool set file */
-	if (read(fdp, &hdr, sizeof(hdr)) != sizeof(hdr)) {
-		ERR("cannot read pool header from poolset");
+	if (part->is_dax) {
+		if (device_dax_pread(part->path, &hdr, sizeof(hdr), 0) !=
+				sizeof(hdr)) {
+			ERR("cannot read pool header from poolset");
+			return POOL_TYPE_UNKNOWN;
+		}
+	} else {
+		int fdp = util_file_open(part->path, NULL, 0, O_RDONLY);
+		if (fdp < 0) {
+			ERR("cannot open poolset part file");
+			return POOL_TYPE_UNKNOWN;
+		}
+		if (read(fdp, &hdr, sizeof(hdr)) != sizeof(hdr)) {
+			ERR("cannot read pool header from poolset");
+			close(fdp);
+			return POOL_TYPE_UNKNOWN;
+		}
 		close(fdp);
-		return POOL_TYPE_UNKNOWN;
 	}
 
-	close(fdp);
 	util_convert2h_hdr_nocheck(&hdr);
 	enum pool_type type = pool_hdr_get_type(&hdr);
 	return type;

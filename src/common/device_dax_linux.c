@@ -143,7 +143,7 @@ device_dax_zero(const char *path)
 	int olderrno;
 	int ret = 0;
 
-	if ((fd = open(path, O_RDWR)) < -1)
+	if ((fd = open(path, O_RDWR)) < 0)
 		return -1;
 
 	ssize_t size = device_dax_size(path);
@@ -181,7 +181,7 @@ device_dax_map(const char *path)
 	int olderrno;
 	void *addr = NULL;
 
-	if ((fd = open(path, O_RDWR)) < -1)
+	if ((fd = open(path, O_RDWR)) < 0)
 		return NULL;
 
 	ssize_t size = device_dax_size(path);
@@ -189,8 +189,6 @@ device_dax_map(const char *path)
 		goto out;
 
 	addr = util_map(fd, (size_t)size, 0, 0);
-	if (addr == NULL)
-		goto out;
 
 out:
 	olderrno = errno;
@@ -198,4 +196,57 @@ out:
 	errno = olderrno;
 
 	return addr;
+}
+
+/*
+ * device_dax_pwrite -- writes data from a buffer to the dax device (at the
+ *	given offset)
+ */
+ssize_t
+device_dax_pwrite(const char *path, const void *buffer, size_t size,
+		off_t offset)
+{
+	ssize_t file_size = device_dax_size(path);
+	if (file_size < 0)
+		return -1;
+
+	size_t max_size = (size_t)(file_size - offset);
+	if (size > max_size) {
+		LOG(1, "Requested size of write goes beyond the mapped memory");
+		size = max_size;
+	}
+
+	void *addr = device_dax_map(path);
+	if (addr == NULL)
+		return -1;
+
+	memcpy(ADDR_SUM(addr, offset), buffer, size);
+	util_unmap(addr, (size_t)file_size);
+	return (ssize_t)size;
+}
+
+/*
+ * device_dax_pread -- reads data from the dax device (at the given offset) to
+ *	a buffer
+ */
+ssize_t
+device_dax_pread(const char *path, void *buffer, size_t size, off_t offset)
+{
+	ssize_t file_size = device_dax_size(path);
+	if (file_size < 0)
+		return -1;
+
+	size_t max_size = (size_t)(file_size - offset);
+	if (size > max_size) {
+		LOG(1, "Requested size of read goes beyond the mapped memory");
+		size = max_size;
+	}
+
+	void *addr = device_dax_map(path);
+	if (addr == NULL)
+		return -1;
+
+	memcpy(buffer, ADDR_SUM(addr, offset), size);
+	util_unmap(addr, (size_t)file_size);
+	return (ssize_t)size;
 }

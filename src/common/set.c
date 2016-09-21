@@ -360,24 +360,36 @@ util_map_part(struct pool_set_part *part, void *addr, size_t size,
 	ASSERTeq(size % Mmap_align, 0);
 	ASSERT(((off_t)offset) >= 0);
 
-	if (!size)
-		size = (part->filesize & ~(Mmap_align - 1)) - offset;
+	void *addrp;
+	if (part->is_dax) {
+		/*
+		 * dax device must be the only part in a replica, so we can map
+		 * it all
+		 */
+		addrp = device_dax_map(part->path);
+		if (addrp == MAP_FAILED) {
+			ERR("!map for dax device: %s", part->path);
+			return -1;
+		}
+		part->addr = addrp;
+		part->size = part->filesize;
+	} else {
+		if (!size)
+			size = (part->filesize & ~(Mmap_align - 1)) - offset;
 
-	void *addrp = mmap(addr, size,
-		PROT_READ|PROT_WRITE, flags, part->fd, (off_t)offset);
-
-	if (addrp == MAP_FAILED) {
-		ERR("!mmap: %s", part->path);
-		return -1;
-	}
-
-	part->addr = addrp;
-	part->size = size;
-
-	if (addr != NULL && (flags & MAP_FIXED) && part->addr != addr) {
-		ERR("!mmap: %s", part->path);
-		munmap(addr, size);
-		return -1;
+		addrp = mmap(addr, size, PROT_READ|PROT_WRITE, flags, part->fd,
+				(off_t)offset);
+		if (addrp == MAP_FAILED) {
+			ERR("!mmap: %s", part->path);
+			return -1;
+		}
+		part->addr = addrp;
+		part->size = size;
+		if (addr != NULL && (flags & MAP_FIXED) && part->addr != addr) {
+			ERR("!mmap: %s", part->path);
+			munmap(addr, size);
+			return -1;
+		}
 	}
 
 	VALGRIND_REGISTER_PMEM_MAPPING(part->addr, part->size);
@@ -1057,7 +1069,8 @@ util_part_open(struct pool_set_part *part, size_t minsize, int create)
 		part->created = 1;
 	} else {
 		size_t size = 0;
-		part->fd = util_file_open(part->path, &size, minsize, O_RDWR);
+		int flags = O_RDWR;
+		part->fd = util_file_open(part->path, &size, minsize, flags);
 		if (part->fd == -1) {
 			LOG(2, "failed to open file: %s", part->path);
 			return -1;

@@ -80,3 +80,28 @@ device_dax_map(const char *path)
 
 	return NULL;
 }
+
+/*
+ * device_dax_pwrite -- writes data from a buffer to the dax device (at the
+ *	given offset)
+ */
+ssize_t
+device_dax_pwrite(const char *path, const void *buffer, size_t size,
+		off_t offset)
+{
+	errno = ENOSYS;
+
+	return -1;
+}
+
+/*
+ * device_dax_pread -- reads data from the dax device (at the given offset) to
+ *	a buffer
+ */
+ssize_t
+device_dax_pread(const char *path, void *buffer, size_t size, off_t offset)
+{
+	errno = ENOSYS;
+
+	return -1;
+}
