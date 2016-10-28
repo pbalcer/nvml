@@ -360,24 +360,36 @@ util_map_part(struct pool_set_part *part, void *addr, size_t size,
 	ASSERTeq(size % Mmap_align, 0);
 	ASSERT(((off_t)offset) >= 0);
 
-	if (!size)
-		size = (part->filesize & ~(Mmap_align - 1)) - offset;
+	void *addrp;
+	if (part->provider.type == PMEM_PROVIDER_DEVICE_DAX) {
+		/*
+		 * dax device must be the only part in a replica, so we can map
+		 * it all
+		 */
+		addrp = part->provider.pops->map(&part->provider, 0);
+		if (addrp == MAP_FAILED) {
+			ERR("!map for dax device: %s", part->path);
+			return -1;
+		}
+		part->addr = addrp;
+		part->size = part->filesize;
+	} else {
+		if (!size)
+			size = (part->filesize & ~(Mmap_align - 1)) - offset;
 
-	void *addrp = mmap(addr, size,
-		PROT_READ|PROT_WRITE, flags, part->fd, (off_t)offset);
-
-	if (addrp == MAP_FAILED) {
-		ERR("!mmap: %s", part->path);
-		return -1;
-	}
-
-	part->addr = addrp;
-	part->size = size;
-
-	if (addr != NULL && (flags & MAP_FIXED) && part->addr != addr) {
-		ERR("!mmap: %s", part->path);
-		munmap(addr, size);
-		return -1;
+		addrp = mmap(addr, size, PROT_READ|PROT_WRITE, flags, part->fd,
+				(off_t)offset);
+		if (addrp == MAP_FAILED) {
+			ERR("!mmap: %s", part->path);
+			return -1;
+		}
+		part->addr = addrp;
+		part->size = size;
+		if (addr != NULL && (flags & MAP_FIXED) && part->addr != addr) {
+			ERR("!mmap: %s", part->path);
+			munmap(addr, size);
+			return -1;
+		}
 	}
 
 	VALGRIND_REGISTER_PMEM_MAPPING(part->addr, part->size);
@@ -1063,12 +1075,6 @@ util_part_open(struct pool_set_part *part, size_t minsize, int create)
 	if (p->exists)
 		create = 0;
 
-	if (!p->exists && !create) {
-		errno = ENOENT;
-		ERR("!open %s", part->path);
-		goto error_init;
-	}
-
 	ssize_t real_size = create ?
 		(ssize_t)part->filesize : p->pops->get_size(p);
 	if (real_size < 0)
@@ -1087,10 +1093,10 @@ util_part_open(struct pool_set_part *part, size_t minsize, int create)
 	}
 
 	if (create) {
-		part->created = 1;
-
 		if (p->pops->allocate_space(p, part->filesize, 0) < 0)
 			goto error_after_open;
+
+		part->created = 1;
 	}
 
 	if (p->pops->lock(p) < 0) {
@@ -1111,6 +1117,7 @@ util_part_open(struct pool_set_part *part, size_t minsize, int create)
 
 error_after_open:
 	p->pops->close(p);
+	part->fd = p->fd = -1;
 
 error_init:
 	pmem_provider_fini(p);
@@ -1125,9 +1132,10 @@ void
 util_part_fdclose(struct pool_set_part *part)
 {
 	if (part->fd != -1) {
-		close(part->fd);
-		part->fd = -1;
+		part->provider.pops->close(&part->provider);
+		part->fd = part->provider.fd = -1;
 	}
+	pmem_provider_fini(&part->provider);
 }
 
 /*
@@ -1404,7 +1412,7 @@ util_poolset_create_set(struct pool_set **setp, const char *path,
 	 * read returns ssize_t, but we know it will return value between -1
 	 * and POOLSET_HDR_SIG_LEN (11), so we can safely cast it to int
 	 */
-	ssize_t nread = read(p.fd, signature, POOLSET_HDR_SIG_LEN);
+	ssize_t nread = p.pops->pread(&p, signature, POOLSET_HDR_SIG_LEN, 0);
 	if (nread < 0) {
 		ERR("!read %d", p.fd);
 		goto error_after_open;

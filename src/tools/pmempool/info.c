@@ -50,8 +50,10 @@
 
 #include "common.h"
 #include "output.h"
+#include "out.h"
 #include "info.h"
 #include "set.h"
+#include "pmem_provider.h"
 
 #define DEFAULT_CHUNK_TYPES\
 	((1<<CHUNK_TYPE_FREE)|\
@@ -65,6 +67,9 @@
 
 #define GET_ALIGNMENT(ad, x)\
 (1 + (((ad) >> (ALIGNMENT_DESC_BITS * (x))) & ((1 << ALIGNMENT_DESC_BITS) - 1)))
+
+#define UNDEF_REPLICA UINT_MAX
+#define UNDEF_PART UINT_MAX
 
 /*
  * Default arguments
@@ -299,6 +304,15 @@ static const char *help_str =
 "  -p, --replica <num>             Print info from specified replica\n"
 "For complete documentation see %s-info(1) manual page.\n"
 ;
+
+/*
+ * pmem_provider_type_str
+ */
+static const char *pmem_provider_type_str[] = {
+		[PMEM_PROVIDER_UNKNOWN] = "unknown",
+		[PMEM_PROVIDER_REGULAR_FILE] = "regular file",
+		[PMEM_PROVIDER_DEVICE_DAX] = "device dax"
+};
 
 /*
  * print_usage -- print application usage short description
@@ -541,7 +555,70 @@ pmempool_info_read(struct pmem_info *pip, void *buff, size_t nbytes,
 }
 
 /*
- * pmempool_info_pool_hdr -- print pool header information
+ * pmempool_info_part -- (internal) print info about poolset part
+ */
+static int
+pmempool_info_part(struct pmem_info *pip, unsigned repn, unsigned partn, int v)
+{
+	const char *path = NULL;
+	if (repn != UNDEF_REPLICA && partn != UNDEF_PART) {
+		outv(v, "part %u:\n", partn);
+		struct pool_set_part *part =
+			&pip->pfile->poolset->replica[repn]->part[partn];
+		path = part->path;
+	} else {
+		outv_title(v, "Poolset part");
+		path = pip->file_name;
+	}
+	outv_field(v, "path", "%s", path);
+	struct pmem_provider p;
+	if (pmem_provider_init(&p, path) < 0)
+		return -1;
+
+	outv_field(v, "type", "%s", pmem_provider_type_str[p.type]);
+	outv_field(v, "size", "%lu", p.pops->get_size(&p));
+
+	pmem_provider_fini(&p);
+	return 0;
+}
+
+/*
+ * pmempool_info_replica -- (internal) print info about replica
+ */
+static int
+pmempool_info_replica(struct pmem_info *pip, unsigned repn, int v)
+{
+	struct pool_replica *rep = pip->pfile->poolset->replica[repn];
+	outv(v, "Replica %u%s - %s, %u part(s):\n", repn,
+		repn == 0 ? " (master)" : "",
+		rep->remote == NULL ? "local" : "remote",
+		rep->nparts);
+	for (unsigned p = 0; p < rep->nparts; ++p)
+		if (pmempool_info_part(pip, repn, p, v))
+			return -1;
+
+	return 0;
+}
+
+/*
+ * pmempool_info_poolset -- (internal) print info about poolset structure
+ */
+static int
+pmempool_info_poolset(struct pmem_info *pip, int v)
+{
+	ASSERTeq(pip->params.is_poolset, 1);
+	outv(v, "Poolset structure:\n");
+	outv_field(v, "Number of replicas", "%u",
+			pip->pfile->poolset->nreplicas);
+	for (unsigned r = 0; r < pip->pfile->poolset->nreplicas; ++r)
+		if (pmempool_info_replica(pip, r, v))
+			return -1;
+
+	return 0;
+}
+
+/*
+ * pmempool_info_pool_hdr -- (internal) print pool header information
  */
 static int
 pmempool_info_pool_hdr(struct pmem_info *pip, int v)
@@ -580,7 +657,7 @@ pmempool_info_pool_hdr(struct pmem_info *pip, int v)
 		return -1;
 	}
 
-	outv(v, "POOL Header:\n");
+	outv_title(v, "POOL Header");
 	outv_hexdump(pip->args.vhdrdump, hdr, sizeof(*hdr), 0, 1);
 
 	util_convert2h_hdr_nocheck(hdr);
@@ -718,6 +795,18 @@ pmempool_info_file(struct pmem_info *pip, const char *file_name)
 
 		/* hdr info is not present in btt device */
 		if (pip->type != PMEM_POOL_TYPE_BTT) {
+			if (pip->params.is_poolset &&
+					pmempool_info_poolset(pip,
+							VERBOSE_DEFAULT)) {
+				ret = -1;
+				goto out_close;
+			}
+			if (pip->params.is_part_file &&
+					pmempool_info_part(pip, UNDEF_REPLICA,
+						UNDEF_PART, VERBOSE_DEFAULT)) {
+				ret = -1;
+				goto out_close;
+			}
 			if (pmempool_info_pool_hdr(pip, VERBOSE_DEFAULT)) {
 				ret = -1;
 				goto out_close;

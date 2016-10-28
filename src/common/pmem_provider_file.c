@@ -97,10 +97,14 @@ provider_regular_file_open(struct pmem_provider *p,
 #else
 		if ((p->fd = util_tmpfile(p->path, "/pmem.XXXXXX")) < 0)
 			return -1;
+
+		p->flags = S_IRUSR | S_IWUSR;
 #endif
 	} else {
 		if ((p->fd = open(p->path, flags, mode)) < 0)
 			return -1;
+
+		p->flags = flags;
 	}
 
 	if (!p->exists) {
@@ -216,6 +220,28 @@ provider_regular_file_map(struct pmem_provider *p, size_t alignment)
 }
 
 /*
+ * provider_regular_file_pread -- (internal) reads data from the file (at the
+ *	given offset) to a buffer
+ */
+static ssize_t
+provider_regular_file_pread(struct pmem_provider *p, void *buffer, size_t size,
+		off_t offset)
+{
+	return pread(p->fd, buffer, size, offset);
+}
+
+/*
+ * provider_regular_file_pwrite -- (internal) writes data from a buffer to the
+ *	file (at the given offset)
+ */
+static ssize_t
+provider_regular_file_pwrite(struct pmem_provider *p, const void *buffer,
+		size_t size, off_t offset)
+{
+	return pwrite(p->fd, buffer, size, offset);
+}
+
+/*
  * provider_regular_file_protect_range -- (internal) changes protection for the
  *	provided memory range
  */
@@ -268,6 +294,8 @@ static struct pmem_provider_ops pmem_provider_regular_file_ops = {
 	.rm = provider_regular_file_rm,
 	.lock = provider_regular_file_lock,
 	.map = provider_regular_file_map,
+	.pread = provider_regular_file_pread,
+	.pwrite = provider_regular_file_pwrite,
 	.get_size = provider_regular_file_get_size,
 	.allocate_space = provider_regular_file_allocate_space,
 	.always_pmem = provider_regular_file_always_pmem,

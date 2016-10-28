@@ -49,6 +49,7 @@ extern int Mmap_no_random;
 extern void *Mmap_hint;
 
 void *util_map(int fd, size_t len, int cow, size_t req_align);
+void *util_map_ronly(int fd, size_t len, int cow, size_t req_align);
 int util_unmap(void *addr, size_t len);
 
 void *util_map_tmpfile(const char *dir, size_t size, size_t req_align);

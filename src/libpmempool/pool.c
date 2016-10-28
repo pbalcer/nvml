@@ -870,23 +870,34 @@ pool_set_type(struct pool_set *set)
 
 	/* open the first part file to read the pool header values */
 	const struct pool_set_part *part = &PART(REP(set, 0), 0);
-	int fdp = util_file_open(part->path, NULL, 0, O_RDONLY);
-	if (fdp < 0) {
+	struct pmem_provider p;
+	if (pmem_provider_init(&p, part->path) < 0) {
 		ERR("cannot open poolset part file");
 		return POOL_TYPE_UNKNOWN;
 	}
 
-	/* read the pool header from first pool set file */
-	if (read(fdp, &hdr, sizeof(hdr)) != sizeof(hdr)) {
-		ERR("cannot read pool header from poolset");
-		close(fdp);
-		return POOL_TYPE_UNKNOWN;
+	if (p.pops->open(&p, O_RDONLY, 0, 0) < 0) {
+		ERR("!open %s", part->path);
+		goto err_fini;
 	}
 
-	close(fdp);
+	/* read the pool header from first pool set file */
+	if (p.pops->pread(&p, &hdr, sizeof(hdr), 0) != sizeof(hdr)) {
+		ERR("cannot read pool header from poolset");
+		goto err_close;
+	}
+
+	p.pops->close(&p);
+	pmem_provider_fini(&p);
 	util_convert2h_hdr_nocheck(&hdr);
 	enum pool_type type = pool_hdr_get_type(&hdr);
 	return type;
+
+err_close:
+	p.pops->close(&p);
+err_fini:
+	pmem_provider_fini(&p);
+	return POOL_TYPE_UNKNOWN;
 }
 
 /*

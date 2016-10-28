@@ -59,6 +59,7 @@ struct pmem_provider {
 	int fd;
 	util_stat_t st;
 	int exists;
+	int flags;	/* valid only if fd >= 0 */
 
 	enum pmem_provider_type type;
 	const struct pmem_provider_ops *pops;
@@ -71,6 +72,10 @@ struct pmem_provider_ops {
 	int (*rm)(struct pmem_provider *p);
 	int (*lock)(struct pmem_provider *p);
 	void *(*map)(struct pmem_provider *p, size_t alignment);
+	ssize_t (*pread)(struct pmem_provider *p, void *buffer, size_t size,
+			off_t offset);
+	ssize_t (*pwrite)(struct pmem_provider *p, const void *buffer,
+			size_t size, off_t offset);
 	ssize_t (*get_size)(struct pmem_provider *p);
 	int (*allocate_space)(struct pmem_provider *p, size_t size, int sparse);
 	int (*always_pmem)(void);

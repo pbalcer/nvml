@@ -46,6 +46,7 @@
 #include "pmem_provider.h"
 #include "mmap.h"
 #include "out.h"
+#include "util.h"
 
 #define DEVICE_DAX_PREFIX "/sys/class/dax"
 #define MAX_SIZE_LENGTH 64
@@ -88,6 +89,7 @@ provider_device_dax_open(struct pmem_provider *p,
 
 	if ((p->fd = open(p->path, flags, mode)) < 0)
 		return -1;
+	p->flags = flags;
 
 	return 0;
 }
@@ -101,6 +103,7 @@ provider_device_dax_close(struct pmem_provider *p)
 	int olderrno = errno;
 	(void) close(p->fd);
 	errno = olderrno;
+	p->fd = -1;
 }
 
 /*
@@ -150,7 +153,69 @@ provider_device_dax_map(struct pmem_provider *p, size_t alignment)
 	if (size < 0)
 		return NULL;
 
-	return util_map(p->fd, (size_t)size, 0, alignment);
+	ASSERT(p->fd >= 0);
+	if (p->flags == O_RDONLY)
+		return util_map_ronly(p->fd, (size_t)size, 0, alignment);
+	else
+		return util_map(p->fd, (size_t)size, 0, alignment);
+}
+
+/*
+ * provider_device_dax_pread -- (internal) reads data from the dax device (at
+ *	the given offset) to a buffer
+ */
+static ssize_t
+provider_device_dax_pread(struct pmem_provider *p, void *buffer, size_t size,
+		off_t offset)
+{
+	ssize_t p_size = p->pops->get_size(p);
+	if (p_size < 0)
+		return -1;
+
+	size_t max_size = (size_t)(p_size - offset);
+	if (size > max_size) {
+		LOG(1, "Requested size of read goes beyond the mapped memory");
+		size = max_size;
+	}
+
+	void *addr = p->pops->map(p, 0);
+	if (addr == NULL)
+		return -1;
+
+	memcpy(buffer, ADDR_SUM(addr, offset), size);
+	util_unmap(addr, (size_t)p_size);
+	return (ssize_t)size;
+}
+
+/*
+ * provider_device_dax_pwrite -- (internal) writes data from a buffer to the
+ *	dax device (at the given offset)
+ */
+static ssize_t
+provider_device_dax_pwrite(struct pmem_provider *p, const void *buffer,
+		size_t size, off_t offset)
+{
+	off_t curr_off = lseek(p->fd, 0, SEEK_CUR);
+	if (curr_off < 0)
+		return -1;
+
+	ssize_t p_size = p->pops->get_size(p);
+	if (p_size < 0)
+		return -1;
+
+	size_t max_size = (size_t)(p_size - curr_off);
+	if (size > max_size) {
+		LOG(1, "Requested size of read goes beyond the mapped memory");
+		size = max_size;
+	}
+
+	void *addr = p->pops->map(p, 0);
+	if (addr == NULL)
+		return -1;
+
+	memcpy(ADDR_SUM(addr, curr_off), buffer, size);
+	util_unmap(addr, (size_t)p_size);
+	return (ssize_t)size;
 }
 
 /*
@@ -249,6 +314,8 @@ static struct pmem_provider_ops pmem_provider_device_dax_ops = {
 	.rm = provider_device_dax_rm,
 	.lock = provider_device_dax_lock,
 	.map = provider_device_dax_map,
+	.pread = provider_device_dax_pread,
+	.pwrite = provider_device_dax_pwrite,
 	.get_size = provider_device_dax_get_size,
 	.allocate_space = provider_device_dax_allocate_space,
 	.always_pmem = provider_device_dax_always_pmem,

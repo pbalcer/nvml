@@ -59,6 +59,9 @@
 #include "btt.h"
 #include "file.h"
 #include "set.h"
+#include "pmem_provider.h"
+#include "out.h"
+#include "mmap.h"
 
 #define REQ_BUFF_SIZE	2048U
 #define Q_BUFF_SIZE	8192
@@ -554,24 +557,28 @@ util_poolset_map(const char *fname, struct pool_set **poolset, int rdonly)
 	}
 
 	/* open the first part set file to read the pool header values */
-	int fdp = util_file_open(set->replica[0]->part[0].path,
-			NULL, 0, O_RDONLY);
-	if (fdp < 0) {
-		outv_err("cannot open poolset part file\n");
+	struct pmem_provider p;
+	if (pmem_provider_init(&p, set->replica[0]->part[0].path) < 0) {
 		ret = -1;
 		goto err_pool_set;
 	}
 
+	if (p.pops->open(&p, O_RDONLY, 0, 0) < 0) {
+		ERR("!open %s", set->replica[0]->part[0].path);
+		ret = -1;
+		goto err_provider_fini;
+	}
+
 	struct pool_hdr hdr;
 	/* read the pool header from first pool set file */
-	if (pread(fdp, &hdr, sizeof(hdr), 0)
-			!= sizeof(hdr)) {
+	if (p.pops->pread(&p, &hdr, sizeof(hdr), 0) != sizeof(hdr)) {
 		outv_err("cannot read pool header from poolset\n");
 		ret = -1;
 		goto err_close_part;
 	}
 
-	close(fdp);
+	p.pops->close(&p);
+	pmem_provider_fini(&p);
 	util_poolset_free(set);
 	close(fd);
 
@@ -608,8 +615,11 @@ util_poolset_map(const char *fname, struct pool_set **poolset, int rdonly)
 	}
 
 	return 0;
+
 err_close_part:
-	close(fdp);
+	p.pops->close(&p);
+err_provider_fini:
+	pmem_provider_fini(&p);
 err_pool_set:
 	util_poolset_free(set);
 err_close:
@@ -625,37 +635,33 @@ int
 pmem_pool_parse_params(const char *fname, struct pmem_pool_params *paramsp,
 		int check)
 {
-	util_stat_t stat_buf;
 	paramsp->type = PMEM_POOL_TYPE_UNKNOWN;
-	char pool_str_addr[POOL_HDR_DESC_SIZE];
 
 	paramsp->is_poolset = util_is_poolset_file(fname) == 1;
-	int fd = util_file_open(fname, NULL, 0, O_RDONLY);
-	if (fd < 0)
+	struct pmem_provider p;
+	if (pmem_provider_init(&p, fname) < 0)
 		return -1;
+
+	if (p.pops->open(&p, O_RDONLY, 0, 0) < 0) {
+		ERR("!open %s", fname);
+		pmem_provider_fini(&p);
+		return -1;
+	}
 
 	int ret = 0;
 
-	/* get file size and mode */
-	if (util_fstat(fd, &stat_buf)) {
-		ret = -1;
-		goto out_close;
-	}
-
-	assert(stat_buf.st_size >= 0);
-	paramsp->size = (uint64_t)stat_buf.st_size;
-	paramsp->mode = stat_buf.st_mode;
+	assert(p.st.st_size >= 0);
+	paramsp->size = (uint64_t)p.st.st_size;
+	paramsp->mode = p.st.st_mode;
 
 	void *addr = NULL;
 	struct pool_set *set = NULL;
 	if (paramsp->is_poolset) {
-		/* close the file */
-		close(fd);
-		fd = -1;
-
 		if (check) {
-			if (util_poolset_map(fname, &set, 1))
-				return -1;
+			if (util_poolset_map(fname, &set, 1)) {
+				ret = -1;
+				goto out_close;
+			}
 		} else {
 			ret = util_poolset_create_set(&set, fname, 0, 0);
 			if (ret < 0) {
@@ -670,12 +676,23 @@ pmem_pool_parse_params(const char *fname, struct pmem_pool_params *paramsp,
 		addr = set->replica[0]->part[0].addr;
 	} else {
 		/* read first two pages */
-		ssize_t num = read(fd, pool_str_addr, POOL_HDR_DESC_SIZE);
-		if (num < (ssize_t)POOL_HDR_DESC_SIZE) {
-			ret = -1;
-			goto out_close;
+		if (p.type == PMEM_PROVIDER_DEVICE_DAX) {
+			addr = p.pops->map(&p, 0);
+			if (addr == NULL) {
+				ret = -1;
+				goto out_close;
+			}
+		} else {
+			char pool_str_addr[POOL_HDR_DESC_SIZE];
+			ssize_t num = read(p.fd, pool_str_addr,
+					POOL_HDR_DESC_SIZE);
+			if (num < (ssize_t)POOL_HDR_DESC_SIZE) {
+				ERR("!read");
+				ret = -1;
+				goto out_close;
+			}
+			addr = pool_str_addr;
 		}
-		addr = pool_str_addr;
 	}
 
 	struct pool_hdr hdr;
@@ -700,6 +717,7 @@ pmem_pool_parse_params(const char *fname, struct pmem_pool_params *paramsp,
 		paramsp->type = pmem_pool_type_parse_hdr(addr);
 
 	paramsp->is_checksum_ok = pmem_pool_checksum(addr);
+	paramsp->is_part_file = !paramsp->is_poolset && paramsp->is_checksum_ok;
 
 	if (paramsp->type == PMEM_POOL_TYPE_BLK) {
 		struct pmemblk pbp;
@@ -715,8 +733,9 @@ pmem_pool_parse_params(const char *fname, struct pmem_pool_params *paramsp,
 		util_poolset_close(set, 0);
 
 out_close:
-	if (fd >= 0)
-		(void) close(fd);
+	if (p.fd >= 0)
+		(void) p.pops->close(&p);
+	pmem_provider_fini(&p);
 	return ret;
 }
 

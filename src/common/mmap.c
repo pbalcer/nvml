@@ -79,15 +79,15 @@ util_mmap_init(void)
 }
 
 /*
- * util_map -- memory map a file
+ * util_do_map -- (internal) memory map a file
  *
  * This is just a convenience function that calls mmap() with the
  * appropriate arguments and includes our trace points.
  *
  * If cow is set, the file is mapped copy-on-write.
  */
-void *
-util_map(int fd, size_t len, int cow, size_t req_align)
+static void *
+util_do_map(int fd, size_t len, int cow, size_t req_align, int rw_rights)
 {
 	LOG(3, "fd %d len %zu cow %d req_align %zu", fd, len, cow, req_align);
 
@@ -98,7 +98,7 @@ util_map(int fd, size_t len, int cow, size_t req_align)
 		return NULL;
 	}
 
-	if ((base = mmap(addr, len, PROT_READ|PROT_WRITE,
+	if ((base = mmap(addr, len, rw_rights,
 			(cow) ? MAP_PRIVATE|MAP_NORESERVE : MAP_SHARED,
 					fd, 0)) == MAP_FAILED) {
 		ERR("!mmap %zu bytes", len);
@@ -108,6 +108,25 @@ util_map(int fd, size_t len, int cow, size_t req_align)
 	LOG(3, "mapped at %p", base);
 
 	return base;
+}
+
+
+/*
+ * util_map -- memory map a file in read-write mode
+ */
+void *
+util_map(int fd, size_t len, int cow, size_t req_align)
+{
+	return util_do_map(fd, len, cow, req_align, PROT_READ|PROT_WRITE);
+}
+
+/*
+ * util_map_ronly -- memory map a file in read-only mode
+ */
+void *
+util_map_ronly(int fd, size_t len, int cow, size_t req_align)
+{
+	return util_do_map(fd, len, cow, req_align, PROT_READ);
 }
 
 /*
