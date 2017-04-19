@@ -1283,6 +1283,106 @@ pmem_init(void)
 #endif
 }
 
+#define POISON_MAX (1 << 10)
+#define POISON_MAX_MASK (POISON_MAX - 1)
+
+/*
+ * Poison is handled using a multiple producer, single consumer ring buffer.
+ */
+static uint64_t poison_read;
+static uint64_t poison_write;
+
+static struct poison {
+	void *addr;
+	short addr_lsb;
+} poison_arr[POISON_MAX];
+
+struct poison_entry {
+	struct poison poison;
+	LIST_ENTRY(poison_entry) pentry;
+};
+
+static LIST_HEAD(poison_head, poison_entry) poison_not_handled =
+	SLIST_HEAD_INITIALIZER(poison_not_handled);
+
+/*
+ * pmem_poison_produce -- the producer interface of the poison ringbuf
+ *
+ * This function must be async and reentrant safe. The intention is for it to be
+ * called from a signal handler.
+ */
+int
+pmem_poison_produce(void *addr, short addr_lsb)
+{
+	ASSERTne(addr, NULL);
+
+	uint64_t w = __sync_fetch_and_add(&poison_write, 1) & POISON_MAX_MASK;
+	if (__sync_bool_compare_and_swap(&poison_arr[w].addr, NULL, addr) == 0)
+		return -1;
+
+	poison_arr[w].addr_lsb = addr_lsb;
+
+	return 0;
+}
+
+/*
+ * pmem_poison_consume_single --
+ *	(internal) the consumer interface of the poison ringbuf
+ */
+static int
+pmem_poison_consume_single(struct poison *poison)
+{
+	uint64_t r = __sync_fetch_and_add(&poison_read, 1) & POISON_MAX_MASK;
+	*poison = poison_arr[r];
+	if (poison->addr == NULL)
+		return -1;
+
+	if (__sync_bool_compare_and_swap(&poison_arr[r].addr,
+			poison->addr, NULL) == 0)
+		return -1; /* should never happen */
+
+	return 0;
+}
+
+/*
+ * pmem_poison_consume -- iterates through all the as of yet unhandled poison
+ *	memory blocks.
+ */
+void
+pmem_poison_consume(int (*handler)(void *addr, size_t len))
+{
+	struct poison_entry *e = LIST_FIRST(&poison_not_handled);
+	struct poison_entry *c;
+	while (e != NULL) {
+		c = e;
+		e = LIST_NEXT(e, pentry);
+
+		if (handler(c->poison.addr,
+				(size_t)(1 << c->poison.addr_lsb)) == 0)
+			LIST_REMOVE(c, pentry);
+	}
+
+	struct poison p;
+	while (poison_read != poison_write) {
+		/* the consume method might have been interrupted, skip */
+		if (pmem_poison_consume_single(&p) != 0)
+			continue;
+
+		/*
+		 * The handling function might have decided not to handle this
+		 * memory block.
+		 */
+		if (handler(p.addr, (size_t)(1 << p.addr_lsb)) == 0)
+			continue;
+
+		struct poison_entry *e = Malloc(sizeof(*e));
+		if (e == NULL) /* XXX handle this better */
+			FATAL("unable to populate poison list");
+
+		e->poison = p;
+		LIST_INSERT_HEAD(&poison_not_handled, e, pentry);
+	}
+}
 
 #ifdef _MSC_VER
 /*
