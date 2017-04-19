@@ -43,6 +43,8 @@
 #ifndef LIBPMEM_H
 #define LIBPMEM_H 1
 
+#include <setjmp.h>
+
 #ifdef _WIN32
 #include <pmemcompat.h>
 
@@ -98,6 +100,22 @@ void *pmem_memset_nodrain(void *pmemdest, int c, size_t len);
 
 int pmem_poison_produce(void *addr, short addr_lsb);
 void pmem_poison_consume(int (*handler)(void *addr, size_t len));
+
+void pmem_poison_register_handler(void);
+
+int pmem_poison_section(void *addr, size_t size, sigjmp_buf sigbus_jmpbuf);
+void pmem_poison_section_end(void);
+
+#define PMEM_POISON_HANDLE(addr, size)\
+({sigjmp_buf sigbus_jmpbuf;\
+int ret = sigsetjmp(sigbus_jmpbuf, 0);\
+if (ret == 0) pmem_poison_section(addr, size, sigbus_jmpbuf);\
+else pmem_poison_section_end();\
+ret;\
+})
+
+#define PMEM_POISON_END()\
+pmem_poison_section_end();
 
 /*
  * PMEM_MAJOR_VERSION and PMEM_MINOR_VERSION provide the current version of the

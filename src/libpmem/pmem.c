@@ -165,16 +165,10 @@
  */
 
 #include <sys/mman.h>
-#include <sys/stat.h>
-#include <stdio.h>
-#include <stdlib.h>
-#include <stdint.h>
 #include <string.h>
 #include <emmintrin.h>
 #include <errno.h>
 #include <fcntl.h>
-#include <unistd.h>
-#include <limits.h>
 
 #ifdef _WIN32
 #include <memoryapi.h>
@@ -183,8 +177,6 @@
 #include "libpmem.h"
 #include "pmem.h"
 #include "cpu.h"
-#include "out.h"
-#include "util.h"
 #include "os.h"
 #include "mmap.h"
 #include "file.h"
@@ -1382,6 +1374,97 @@ pmem_poison_consume(int (*handler)(void *addr, size_t len))
 		e->poison = p;
 		LIST_INSERT_HEAD(&poison_not_handled, e, pentry);
 	}
+}
+
+/* Is using TLS signal-safe? */
+static __thread struct {
+	sigjmp_buf sigbus_jmpbuf;
+	void *addr;
+	void *addr_end;
+	struct sigaction oldact;
+} poison_section;
+
+/*
+ * pmem_poison_must_handle -- decides whether or not the incoming signal
+ *	should be handled and stored as pmem poison
+ */
+static int
+pmem_poison_must_handle(siginfo_t *info)
+{
+	if (poison_section.addr == NULL)
+		return 0;
+
+	if (info->si_code != BUS_MCEERR_AO && info->si_code != BUS_MCEERR_AR)
+		return 0;
+
+	if (info->si_addr < poison_section.addr)
+		return 0;
+
+	if (info->si_addr > poison_section.addr_end)
+		return 0;
+
+	return 1;
+}
+
+/*
+ * pmem_poison_sigbus_handler -- SIGBUS handler, if the pmem poison section
+ *	is set up, the signal is of the memory error variety and the address
+ *	is inside of the user-defined range, the page is added to the collection
+ *	of poisoned memory and the handlers jumps back to the poison handling
+ *	section.
+ */
+static void
+pmem_poison_sigbus_handler(int signum, siginfo_t *info, void *ctx)
+{
+	if (pmem_poison_must_handle(info)) {
+		pmem_poison_produce(info->si_addr, info->si_addr_lsb);
+		siglongjmp(poison_section.sigbus_jmpbuf, 1);
+	} else {
+		if (poison_section.oldact.sa_flags & SA_SIGINFO &&
+			poison_section.oldact.sa_sigaction != NULL) {
+			poison_section.oldact.sa_sigaction(signum, info, ctx);
+		} else if (poison_section.oldact.sa_handler != NULL){
+			poison_section.oldact.sa_handler(signum);
+		}
+	}
+}
+
+/*
+ * pmem_poison_register_handler -- registers the SIGBUS handler
+ */
+void
+pmem_poison_register_handler(void)
+{
+	struct sigaction act;
+	act.sa_sigaction = pmem_poison_sigbus_handler;
+	act.sa_flags = SA_SIGINFO;
+	poison_section.oldact.sa_sigaction = NULL;
+	poison_section.oldact.sa_handler = NULL;
+	int ret = sigaction(SIGBUS, &act, &poison_section.oldact);
+	ASSERTeq(ret, 0);
+}
+
+/*
+ * pmem_poison_section -- sets up the per-thread poison section
+ */
+int
+pmem_poison_section(void *addr, size_t size, sigjmp_buf sigbus_jmpbuf)
+{
+	poison_section.addr_end = (char *)addr + size;
+	poison_section.addr = addr;
+
+	memcpy(poison_section.sigbus_jmpbuf, sigbus_jmpbuf, sizeof(jmp_buf));
+
+	return 0;
+}
+
+/*
+ * pmem_poison_section_end -- cleans up the per-thread poison section
+ */
+void
+pmem_poison_section_end(void)
+{
+	poison_section.addr = NULL;
 }
 
 #ifdef _MSC_VER
