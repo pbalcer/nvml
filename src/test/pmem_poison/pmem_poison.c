@@ -34,22 +34,15 @@
  * pmem_poison.c -- unit test for persistent memory poison handling
  */
 
+
+#define _GNU_SOURCE
+
 #include "unittest.h"
 #include <stdlib.h>
 #include <signal.h>
 #include <sys/mman.h>
 #include <setjmp.h>
-
-static sigjmp_buf sigbus_jmpbuf;
-
-static void
-sigbus_handler(int signum, siginfo_t *info, void *ctx)
-{
-	if (info->si_code == BUS_MCEERR_AO || info->si_code == BUS_MCEERR_AR) {
-		pmem_poison_produce(info->si_addr, info->si_addr_lsb);
-		siglongjmp(sigbus_jmpbuf, 1);
-	}
-}
+#include <sys/ucontext.h>
 
 static uint64_t *addri;
 
@@ -77,25 +70,23 @@ main(int argc, char *argv[])
 	void *addr = pmem_map_file(path, 0, 0, 0, &len, &is_pmem);
 	UT_ASSERTne(addr, NULL);
 
-	struct sigaction act;
-	act.sa_sigaction = sigbus_handler;
-	act.sa_flags = SA_SIGINFO;
+	pmem_poison_register_handler();
 
-	if (sigsetjmp(sigbus_jmpbuf, 0) != 0) {
-		pmem_poison_consume(poison_handler);
-	} else {
-		int ret = sigaction(SIGBUS, &act, NULL);
-		UT_ASSERTeq(ret, 0);
+	madvise(addr, (1 << 12), MADV_HWPOISON);
+	{
+		if (PMEM_POISON_HANDLE(addr, len) != 0) {
+			pmem_poison_consume(poison_handler);
+			pmem_unmap(addr, len);
+			DONE(NULL);
+		}
 
-		madvise(addr, (1 << 12), MADV_HWPOISON);
 		addri = addr;
 		*addri = 5;
 
-		/* unreachable */
-		UT_ASSERT(0);
+		PMEM_POISON_END();
 	}
 
-	pmem_unmap(addr, len);
+	UT_ASSERT(0); /* unreachable */
 
 	DONE(NULL);
 }

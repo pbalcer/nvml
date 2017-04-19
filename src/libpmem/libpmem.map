@@ -52,6 +52,9 @@ LIBPMEM_1.0 {
 		pmem_memset_nodrain;
 		pmem_poison_produce;
 		pmem_poison_consume;
+		pmem_poison_section;
+		pmem_poison_register_handler;
+		pmem_poison_section_end;
 	local:
 		*;
 };
