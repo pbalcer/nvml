@@ -96,6 +96,9 @@ void *pmem_memmove_nodrain(void *pmemdest, const void *src, size_t len);
 void *pmem_memcpy_nodrain(void *pmemdest, const void *src, size_t len);
 void *pmem_memset_nodrain(void *pmemdest, int c, size_t len);
 
+int pmem_poison_produce(void *addr, short addr_lsb);
+void pmem_poison_consume(int (*handler)(void *addr, size_t len));
+
 /*
  * PMEM_MAJOR_VERSION and PMEM_MINOR_VERSION provide the current version of the
  * libpmem API as provided by this header file.  Applications can verify that
