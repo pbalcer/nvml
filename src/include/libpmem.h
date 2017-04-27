@@ -108,7 +108,7 @@ void pmem_poison_section_end(void);
 
 #define PMEM_POISON_HANDLE(addr, size)\
 ({sigjmp_buf sigbus_jmpbuf;\
-int ret = sigsetjmp(sigbus_jmpbuf, 0);\
+int ret = sigsetjmp(sigbus_jmpbuf, 1);\
 if (ret == 0) pmem_poison_section(addr, size, sigbus_jmpbuf);\
 else pmem_poison_section_end();\
 ret;\

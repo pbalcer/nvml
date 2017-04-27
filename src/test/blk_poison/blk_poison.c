@@ -31,70 +31,69 @@
  */
 
 /*
- * pmem_poison.c -- unit test for persistent memory poison handling
+ * blk_poison.c -- unit test for pmemblk poison handling
  */
 
-
-#define _GNU_SOURCE
-
 #include "unittest.h"
-#include <stdlib.h>
-#include <signal.h>
-#include <sys/mman.h>
-#include <setjmp.h>
-#include <sys/ucontext.h>
 
-static uint64_t *addri;
+#define PAGESIZE (1<<12)
 
-static int
-poison_handler(void *addr, size_t len)
-{
-	UT_ASSERTeq(len, (1 << 12));
-	UT_ASSERTeq(addr, addri);
-
-	return 0;
-}
-
-static int
-test_section(void *addr, size_t len)
-{
-	if (PMEM_POISON_HANDLE(addr, len) != 0) {
-		pmem_poison_consume(poison_handler);
-		return 0;
-	}
-
-	addri = addr;
-	*addri = 5;
-
-	PMEM_POISON_END();
-
-	return -1;
-}
+#define TEST_BSIZE PAGESIZE
+#define TEST_LBA 0
 
 int
 main(int argc, char *argv[])
 {
-	START(argc, argv, "pmem_poison");
+	START(argc, argv, "blk_rw");
 
 	if (argc != 2)
-		UT_FATAL("usage: %s path", argv[0]);
+		UT_FATAL("usage: %s file", argv[0]);
 
-	char *path = argv[1];
+	const char *path = argv[1];
 
-	size_t len;
-	int is_pmem;
-	void *addr = pmem_map_file(path, 0, 0, 0, &len, &is_pmem);
-	UT_ASSERTne(addr, NULL);
+	PMEMblkpool *handle = pmemblk_create(path, TEST_BSIZE, 0,
+					S_IWUSR | S_IRUSR);
 
-	pmem_poison_register_handler();
+	unsigned char *buf = MALLOC(TEST_BSIZE);
+	memset(buf, 'a', TEST_BSIZE);
 
-	UT_ASSERTeq(test_section(addr, len), -1);
+	int ret;
+	errno = 0;
 
-	madvise(addr, (1 << 12), MADV_HWPOISON);
-	UT_ASSERTeq(test_section(addr, len), 0);
-	UT_ASSERTeq(test_section(addr, len), 0);
+	/* allow metadata writes */
+	ret = pmemblk_write(handle, buf, TEST_LBA);
+	UT_ASSERTeq(ret, 0);
+	UT_ASSERTeq(errno, 0);
 
-	pmem_unmap(addr, len);
+	ret = madvise((char *)handle + (1<<23), (1<<23) + (1<<16), MADV_HWPOISON);
+	UT_ASSERTeq(ret, 0);
+	UT_ASSERTeq(errno, 0);
+
+	ret = pmemblk_write(handle, buf, TEST_LBA);
+	UT_ASSERTeq(ret, -1);
+	UT_ASSERTeq(errno, EFAULT);
+
+	errno = 0;
+
+	ret = pmemblk_read(handle, buf, TEST_LBA);
+	UT_ASSERTeq(ret, -1);
+	UT_ASSERTeq(errno, EFAULT);
+
+	errno = 0;
+
+	ret = pmemblk_set_zero(handle, TEST_LBA);
+	UT_ASSERTeq(ret, -1);
+	UT_ASSERTeq(errno, EFAULT);
+#if 0
+	/* XXX: locking issues (arenap->map_locks[map_lock_num] is held) */
+	errno = 0;
+
+	ret = pmemblk_set_error(handle, TEST_LBA);
+	UT_ASSERTeq(ret, -1);
+	UT_ASSERTeq(errno, EFAULT);
+#endif
+	FREE(buf);
+	pmemblk_close(handle);
 
 	DONE(NULL);
 }
