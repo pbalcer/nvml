@@ -378,6 +378,8 @@ blk_runtime_init(PMEMblkpool *pbp, size_t bsize, int rdonly)
 	/* the data area should be kept read-only for debug version */
 	RANGE_RO(pbp->data, pbp->datasize, pbp->is_dev_dax);
 
+	pmem_poison_register_handler();
+
 	return 0;
 
 err:
@@ -657,6 +659,18 @@ pmemblk_nblock(PMEMblkpool *pbp)
 }
 
 /*
+ * pmemblk_poison_handler -- (internal) consumes all poisoned block and prints
+ *	relevant information.
+ */
+static int
+pmemblk_poison_handler(void *addr, size_t len)
+{
+	ERR("error while accessing data at %p", addr);
+
+	return 0;
+}
+
+/*
  * pmemblk_read -- read a block in a block memory pool
  */
 int
@@ -670,13 +684,24 @@ pmemblk_read(PMEMblkpool *pbp, void *buf, long long blockno)
 		return -1;
 	}
 
-	unsigned lane;
+	volatile unsigned lane;
 
-	lane_enter(pbp, &lane);
+	lane_enter(pbp, (unsigned *)&lane);
+
+	if (PMEM_POISON_HANDLE(pbp, pbp->size) != 0) {
+		pmem_poison_consume(pmemblk_poison_handler);
+		errno = EFAULT;
+
+		lane_exit(pbp, lane);
+
+		return -1;
+	}
 
 	int err = btt_read(pbp->bttp, lane, (uint64_t)blockno, buf);
 
 	lane_exit(pbp, lane);
+
+	PMEM_POISON_END();
 
 	return err;
 }
@@ -701,13 +726,29 @@ pmemblk_write(PMEMblkpool *pbp, const void *buf, long long blockno)
 		return -1;
 	}
 
-	unsigned lane;
+	volatile unsigned lane;
 
-	lane_enter(pbp, &lane);
+	lane_enter(pbp, (unsigned *)&lane);
+
+	if (PMEM_POISON_HANDLE(pbp, pbp->size) != 0) {
+		pmem_poison_consume(pmemblk_poison_handler);
+		errno = EFAULT;
+
+#ifdef DEBUG
+		/* XXX: it might not have been locked */
+		util_mutex_unlock(&pbp->write_lock);
+#endif
+		lane_exit(pbp, lane);
+
+		return -1;
+	}
+
 
 	int err = btt_write(pbp->bttp, lane, (uint64_t)blockno, buf);
 
 	lane_exit(pbp, lane);
+
+	PMEM_POISON_END();
 
 	return err;
 }
@@ -732,13 +773,28 @@ pmemblk_set_zero(PMEMblkpool *pbp, long long blockno)
 		return -1;
 	}
 
-	unsigned lane;
+	volatile unsigned lane;
 
-	lane_enter(pbp, &lane);
+	lane_enter(pbp, (unsigned *)&lane);
+
+	if (PMEM_POISON_HANDLE(pbp, pbp->size) != 0) {
+		pmem_poison_consume(pmemblk_poison_handler);
+		errno = EFAULT;
+
+#ifdef DEBUG
+		/* XXX: it might not have been locked */
+		util_mutex_unlock(&pbp->write_lock);
+#endif
+		lane_exit(pbp, lane);
+
+		return -1;
+	}
 
 	int err = btt_set_zero(pbp->bttp, lane, (uint64_t)blockno);
 
 	lane_exit(pbp, lane);
+
+	PMEM_POISON_END();
 
 	return err;
 }
@@ -763,13 +819,28 @@ pmemblk_set_error(PMEMblkpool *pbp, long long blockno)
 		return -1;
 	}
 
-	unsigned lane;
+	volatile unsigned lane;
 
-	lane_enter(pbp, &lane);
+	lane_enter(pbp, (unsigned *)&lane);
+
+	if (PMEM_POISON_HANDLE(pbp, pbp->size) != 0) {
+		pmem_poison_consume(pmemblk_poison_handler);
+		errno = EFAULT;
+
+#ifdef DEBUG
+		/* XXX: it might not have been locked */
+		util_mutex_unlock(&pbp->write_lock);
+#endif
+		lane_exit(pbp, lane);
+
+		return -1;
+	}
 
 	int err = btt_set_error(pbp->bttp, lane, (uint64_t)blockno);
 
 	lane_exit(pbp, lane);
+
+	PMEM_POISON_END();
 
 	return err;
 }
