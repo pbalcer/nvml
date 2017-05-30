@@ -75,7 +75,7 @@ public:
 	/**
 	 * Default constructor, zeroes the PMEMoid.
 	 */
-	persistent_ptr_base() : oid(OID_NULL)
+	persistent_ptr_base() : data(NULL)
 	{
 		verify_type();
 	}
@@ -93,7 +93,8 @@ public:
 	 *
 	 * @param oid C-style persistent pointer
 	 */
-	persistent_ptr_base(PMEMoid oid) noexcept : oid(oid)
+	persistent_ptr_base(PMEMoid oid) noexcept :
+		data((element_type *)pmemobj_direct(oid))
 	{
 		verify_type();
 	}
@@ -106,7 +107,7 @@ public:
 	 *
 	 * @param ptr volatile pointer, pointing to persistent memory.
 	 */
-	persistent_ptr_base(element_type *ptr) : oid(pmemobj_oid(ptr))
+	persistent_ptr_base(element_type *ptr) : data(ptr)
 	{
 		verify_type();
 	}
@@ -122,7 +123,7 @@ public:
 			  std::is_same<typename std::remove_cv<T>::type,
 				       U>::value>::type>
 	persistent_ptr_base(persistent_ptr_base<U> const &r) noexcept
-		: oid(r.oid)
+		: data(r.data)
 	{
 		verify_type();
 	}
@@ -141,7 +142,7 @@ public:
 				!std::is_void<U>::value,
 			decltype(static_cast<T *>(std::declval<U *>()))>::type>
 	persistent_ptr_base(persistent_ptr_base<U> const &r) noexcept
-		: oid(r.oid)
+		: data(r.data)
 	{
 		verify_type();
 	}
@@ -169,7 +170,7 @@ public:
 	 *
 	 * @param r Persistent pointer to the same type.
 	 */
-	persistent_ptr_base(persistent_ptr_base const &r) noexcept : oid(r.oid)
+	persistent_ptr_base(persistent_ptr_base const &r) noexcept : data(r.data)
 	{
 		verify_type();
 	}
@@ -178,7 +179,7 @@ public:
 	 * Defaulted move constructor.
 	 */
 	persistent_ptr_base(persistent_ptr_base &&r) noexcept
-		: oid(std::move(r.oid))
+		: data(std::move(r.data))
 	{
 		verify_type();
 	}
@@ -190,7 +191,7 @@ public:
 	operator=(persistent_ptr_base &&r)
 	{
 		detail::conditional_add_to_tx(this);
-		this->oid = std::move(r.oid);
+		this->data = std::move(r.data);
 
 		return *this;
 	}
@@ -223,7 +224,7 @@ public:
 	operator=(std::nullptr_t &&)
 	{
 		detail::conditional_add_to_tx(this);
-		this->oid = {0, 0};
+		this->data = NULL;
 		return *this;
 	}
 
@@ -259,7 +260,7 @@ public:
 	{
 		detail::conditional_add_to_tx(this);
 		detail::conditional_add_to_tx(&other);
-		std::swap(this->oid, other.oid);
+		std::swap(this->data, other.data);
 	}
 
 	/**
@@ -272,12 +273,7 @@ public:
 	element_type *
 	get() const noexcept
 	{
-		if (this->oid.pool_uuid_lo ==
-		    std::numeric_limits<decltype(oid.pool_uuid_lo)>::max())
-			return reinterpret_cast<element_type *>(oid.off);
-		else
-			return static_cast<element_type *>(
-				pmemobj_direct(this->oid));
+		return data;
 	}
 
 	/**
@@ -287,10 +283,11 @@ public:
 	 *
 	 * @return const reference to the PMEMoid
 	 */
-	const PMEMoid &
+	const PMEMoid
 	raw() const noexcept
 	{
-		return this->oid;
+		return pmemobj_oid(data);
+//		return this->oid;
 	}
 
 	/**
@@ -303,7 +300,8 @@ public:
 	PMEMoid *
 	raw_ptr() noexcept
 	{
-		return &(this->oid);
+		return NULL;
+		//return &(this->oid);
 	}
 
 	/*
@@ -316,7 +314,7 @@ public:
 
 protected:
 	/* The underlying PMEMoid of the held object. */
-	PMEMoid oid;
+	element_type *data;
 
 	/*
 	 * C++ persistent memory support has following type limitations:
@@ -340,11 +338,7 @@ protected:
 	 */
 	persistent_ptr_base(element_type *vptr, int) : persistent_ptr_base(vptr)
 	{
-		if (OID_IS_NULL(oid)) {
-			oid.pool_uuid_lo = std::numeric_limits<decltype(
-				oid.pool_uuid_lo)>::max();
-			oid.off = reinterpret_cast<decltype(oid.off)>(vptr);
-		}
+		data = vptr;
 	}
 };
 

@@ -168,7 +168,7 @@ public:
 	inline persistent_ptr<T> &operator++()
 	{
 		detail::conditional_add_to_tx(this);
-		this->oid.off += sizeof(T);
+		this->data++;
 
 		return *this;
 	}
@@ -178,10 +178,10 @@ public:
 	 */
 	inline persistent_ptr<T> operator++(int)
 	{
-		PMEMoid noid = this->oid;
+		T *ndata = this->data;
 		++(*this);
 
-		return persistent_ptr<T>(noid);
+		return persistent_ptr<T>(ndata);
 	}
 
 	/**
@@ -190,7 +190,7 @@ public:
 	inline persistent_ptr<T> &operator--()
 	{
 		detail::conditional_add_to_tx(this);
-		this->oid.off -= sizeof(T);
+		this->data--;
 
 		return *this;
 	}
@@ -200,10 +200,10 @@ public:
 	 */
 	inline persistent_ptr<T> operator--(int)
 	{
-		PMEMoid noid = this->oid;
+		T *ndata = this->data;
 		--(*this);
 
-		return persistent_ptr<T>(noid);
+		return persistent_ptr<T>(ndata);
 	}
 
 	/**
@@ -213,7 +213,7 @@ public:
 	operator+=(std::ptrdiff_t s)
 	{
 		detail::conditional_add_to_tx(this);
-		this->oid.off += s * sizeof(T);
+		this->data += s;
 
 		return *this;
 	}
@@ -225,7 +225,7 @@ public:
 	operator-=(std::ptrdiff_t s)
 	{
 		detail::conditional_add_to_tx(this);
-		this->oid.off -= s * sizeof(T);
+		this->data -= s;
 
 		return *this;
 	}

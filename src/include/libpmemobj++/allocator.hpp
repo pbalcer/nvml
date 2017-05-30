@@ -276,7 +276,7 @@ public:
 				"refusing to free "
 				"memory outside of transaction scope");
 
-		if (pmemobj_tx_free(*p.raw_ptr()) != 0)
+		if (pmemobj_tx_free(p.raw()) != 0)
 			throw transaction_free_error(
 				"failed to delete "
 				"persistent memory object");

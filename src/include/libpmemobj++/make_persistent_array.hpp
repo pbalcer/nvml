@@ -92,7 +92,7 @@ make_persistent(std::size_t N)
 	} catch (...) {
 		for (std::size_t j = 1; j <= i; ++j)
 			detail::destroy<I>(ptr[i - j]);
-		pmemobj_tx_free(*ptr.raw_ptr());
+		pmemobj_tx_free(ptr.raw());
 		throw;
 	}
 
@@ -137,7 +137,7 @@ make_persistent()
 	} catch (...) {
 		for (std::size_t j = 1; j <= i; ++j)
 			detail::destroy<I>(ptr[i - j]);
-		pmemobj_tx_free(*ptr.raw_ptr());
+		pmemobj_tx_free(ptr.raw());
 		throw;
 	}
 
@@ -176,7 +176,7 @@ delete_persistent(typename detail::pp_if_array<T>::type ptr, std::size_t N)
 	for (std::size_t i = 0; i < N; ++i)
 		detail::destroy<I>(ptr[N - 1 - i]);
 
-	if (pmemobj_tx_free(*ptr.raw_ptr()) != 0)
+	if (pmemobj_tx_free(ptr.raw()) != 0)
 		throw transaction_free_error("failed to delete "
 					     "persistent memory object");
 }
@@ -213,7 +213,7 @@ delete_persistent(typename detail::pp_if_size_array<T>::type ptr)
 	for (std::size_t i = 0; i < N; ++i)
 		detail::destroy<I>(ptr[N - 1 - i]);
 
-	if (pmemobj_tx_free(*ptr.raw_ptr()) != 0)
+	if (pmemobj_tx_free(ptr.raw()) != 0)
 		throw transaction_free_error("failed to delete "
 					     "persistent memory object");
 }

@@ -88,7 +88,7 @@ make_persistent(Args &&... args)
 		detail::create<T, Args...>(ptr.get(),
 					   std::forward<Args>(args)...);
 	} catch (...) {
-		pmemobj_tx_free(*ptr.raw_ptr());
+		pmemobj_tx_free(ptr.raw());
 		throw;
 	}
 
@@ -127,7 +127,7 @@ delete_persistent(typename detail::pp_if_not_array<T>::type ptr)
 	 */
 	detail::destroy<T>(*ptr);
 
-	if (pmemobj_tx_free(*ptr.raw_ptr()) != 0)
+	if (pmemobj_tx_free(ptr.raw()) != 0)
 		throw transaction_free_error("failed to delete "
 					     "persistent memory object");
 }
