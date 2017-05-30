@@ -49,6 +49,7 @@
 #include <stdlib.h>
 #include <string.h>
 #include <sys/stat.h>
+#include <chrono>
 
 #define LAYOUT "queue"
 
@@ -61,12 +62,13 @@ enum queue_op {
 	QUEUE_PUSH,
 	QUEUE_POP,
 	QUEUE_SHOW,
+	QUEUE_BENCH,
 
 	MAX_QUEUE_OP,
 };
 
 /* queue operations strings */
-const char *ops_str[MAX_QUEUE_OP] = {"", "push", "pop", "show"};
+const char *ops_str[MAX_QUEUE_OP] = {"", "push", "pop", "show", "bench"};
 
 /*
  * parse_queue_op -- parses the operation string and returns matching queue_op
@@ -164,12 +166,33 @@ public:
 			std::cout << n->value << std::endl;
 	}
 
+	uint64_t
+	sum(void) const
+	{
+		uint64_t s = 0;
+		for (auto n = head; n != nullptr; n = n->next)
+			s += n->value;
+
+		return s;
+	}
+
 private:
 	persistent_ptr<pmem_entry> head;
 	persistent_ptr<pmem_entry> tail;
 };
 
 } /* namespace examples */
+
+void
+queue_insert_elements(pool_base &pop, persistent_ptr<examples::pmem_queue> q,
+	uint64_t count)
+{
+	transaction::exec_tx(pop, [&] {
+		for (uint64_t i = 0; i < count; ++i) {
+			q->push(pop, i);
+		}
+	});
+}
 
 int
 main(int argc, char *argv[])
@@ -188,7 +211,9 @@ main(int argc, char *argv[])
 
 	if (file_exists(path) != 0) {
 		pop = pool<examples::pmem_queue>::create(
-			path, LAYOUT, PMEMOBJ_MIN_POOL, CREATE_MODE_RW);
+			path, LAYOUT,
+			PMEMOBJ_MIN_POOL + (256ULL*5000000),
+			CREATE_MODE_RW);
 	} else {
 		pop = pool<examples::pmem_queue>::open(path, LAYOUT);
 	}
@@ -204,6 +229,19 @@ main(int argc, char *argv[])
 		case QUEUE_SHOW:
 			q->show();
 			break;
+		case QUEUE_BENCH: {
+			queue_insert_elements(pop, q, 5000000);
+			auto st = std::chrono::steady_clock::now();
+			uint64_t total_sum = 0;
+			for (int i = 0; i < 10; ++i)
+				total_sum += q->sum();
+			auto en = std::chrono::steady_clock::now();
+
+			auto delta = std::chrono::duration_cast<
+				std::chrono::milliseconds>(en - st).count();
+
+			std::cout << total_sum << " in " << delta << std::endl;
+		} break;
 		default:
 			throw std::invalid_argument("invalid queue operation");
 			break;
