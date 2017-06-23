@@ -201,7 +201,7 @@ INCS += -I../unittest -I$(TOP)/src/include -I$(TOP)/src/common
 
 COMMON_FLAGS  = -ggdb
 COMMON_FLAGS += -Wall
-COMMON_FLAGS += -Werror
+#COMMON_FLAGS += -Werror
 COMMON_FLAGS += -Wpointer-arith
 COMMON_FLAGS += -Wunused-macros
 COMMON_FLAGS += -fno-common

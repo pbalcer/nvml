@@ -1409,7 +1409,9 @@ pmem_poison_must_handle(siginfo_t *info)
 	if (poison_section.addr == NULL)
 		return 0;
 
-	if (info->si_code != BUS_MCEERR_AO && info->si_code != BUS_MCEERR_AR)
+	if (info->si_code != BUS_MCEERR_AO &&
+		info->si_code != BUS_MCEERR_AR &&
+		info->si_code != BUS_ADRERR)
 		return 0;
 
 	if (info->si_addr < poison_section.addr)

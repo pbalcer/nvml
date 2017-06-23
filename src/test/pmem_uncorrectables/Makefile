@@ -1,4 +1,3 @@
-#!/bin/bash
 #
 # Copyright 2017, Intel Corporation
 #
@@ -32,30 +31,13 @@
 #
 
 #
-# Used to check if there are no banned functions in .o file
+# src/test/pmem_poison/Makefile -- build pmem_poison unit test
 #
-# usage: ./check-os.sh [os.h path] [.o file] [.c file]
+TARGET = pmem_uncorrectables
+OBJS = pmem_uncorrectables.o
 
-exit 0
+LIBPMEM=y
 
-EXCLUDE="os_linux|os_thread_linux"
+include ../Makefile.inc
 
-if [[ $2 =~ $EXCLUDE ]]; then
-	echo "skip $2"
-	exit 0
-fi
-
-symbols=$(nm -Cuf posix $2 | sed 's/ U *//g')
-functions=$(cat $1 | tr '\n' '|')
-out=$(
-	for sym in $symbols
-	do
-		grep -w $functions <<<"$sym"
-	done | sed 's/$/\(\)/g')
-
-[[ ! -z $out ]] &&
-	echo -e "`pwd`/$3:1: non wrapped function(s):\n$out\nplease use os wrappers" &&
-	rm -f $2 && # remove .o file as it don't match requirments
-	exit 1
-
-exit 0
+LIBS += -ldl -lpthread -lndctl
