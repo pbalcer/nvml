@@ -1,7 +1,7 @@
 CC=gcc
 OUT=perflush
 
-CFLAGS=-O3 -Wall
+CFLAGS=-O3 -Wall -mavx512f
 LDFLAGS=
 
 SRC=main.c

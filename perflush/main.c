@@ -42,6 +42,7 @@
 #include <assert.h>
 #include <time.h>
 #include <emmintrin.h>
+#include <immintrin.h>
 
 #define ASIZE(array)  (sizeof(array) / sizeof((array)[0]))
 #define ALIGN(val, alignment) ((val) + ((alignment)-1) & ((alignment) - 1))
@@ -202,6 +203,54 @@ ntmemcpy(void *dest, void *src, size_t size)
 #undef CHUNK_SHIFT
 }
 
+static void
+ntmemcpy512(void *dest, void *src, size_t size)
+{
+#define CHUNK_SHIFT	9
+	__m512i *d;
+	__m512i *s;
+	d = (__m512i *)dest;
+	s = (__m512i *)src;
+	size_t cnt;
+	__m512i xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7;
+
+	cnt = size >> CHUNK_SHIFT;
+	for (size_t i = 0; i < cnt; i++) {
+		xmm0 = _mm512_loadu_si512(s);
+		xmm1 = _mm512_loadu_si512(s + 1);
+		xmm2 = _mm512_loadu_si512(s + 2);
+		xmm3 = _mm512_loadu_si512(s + 3);
+		xmm4 = _mm512_loadu_si512(s + 4);
+		xmm5 = _mm512_loadu_si512(s + 5);
+		xmm6 = _mm512_loadu_si512(s + 6);
+		xmm7 = _mm512_loadu_si512(s + 7);
+		s += 8;
+		_mm512_stream_si512(d, xmm0);
+		_mm512_stream_si512(d + 1, xmm1);
+		_mm512_stream_si512(d + 2, xmm2);
+		_mm512_stream_si512(d + 3, xmm3);
+		_mm512_stream_si512(d + 4, xmm4);
+		_mm512_stream_si512(d + 5, xmm5);
+		_mm512_stream_si512(d + 6, xmm6);
+		_mm512_stream_si512(d + 7, xmm7);
+		d += 8;
+	}
+
+	_mm_sfence();
+#undef CHUNK_SHIFT
+}
+
+static int
+ntmemcpy512_noflush(void *addr, size_t data_size)
+{
+	for (size_t i = 0; i < FSIZE; i += data_size) {
+		char *caddr = (char *)(addr + i);
+		ntmemcpy512(caddr, random_data + i, data_size);
+	}
+
+	return 0;
+}
+
 static int
 ntmemcpy_noflush(void *addr, size_t data_size)
 {
@@ -302,6 +351,7 @@ static struct scenario scenarios[] = {
 	SCENARIO(ntmemcpy_clflushopt),
 	SCENARIO(read_flushed),
 	SCENARIO(ntstore),
+	SCENARIO(ntmemcpy512_noflush),
 	{NULL, NULL}
 };
 
