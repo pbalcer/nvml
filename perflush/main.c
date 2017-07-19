@@ -46,7 +46,7 @@
 
 #define ASIZE(array)  (sizeof(array) / sizeof((array)[0]))
 #define ALIGN(val, alignment) ((val) + ((alignment)-1) & ((alignment) - 1))
-#define FSIZE (1 << 30) /* 1 gigabyte */
+#define FSIZE (1ULL << 30) /* 1 gigabyte */
 #define SEED (1234)
 #define DATA (5)
 
@@ -170,36 +170,20 @@ static void
 ntmemcpy(void *dest, void *src, size_t size)
 {
 #define CHUNK_SHIFT	7
-	__m128i *d;
-	__m128i *s;
-	d = (__m128i *)dest;
-	s = (__m128i *)src;
-	size_t cnt;
-	__m128i xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7;
+#define CHUNK_COUNT     8
+	__m128i *d = (__m128i *)dest;
+	__m128i *s = (__m128i *)src;
+	__m128i xmm[CHUNK_COUNT];
 
-	cnt = size >> CHUNK_SHIFT;
-	for (size_t i = 0; i < cnt; i++) {
-		xmm0 = _mm_loadu_si128(s);
-		xmm1 = _mm_loadu_si128(s + 1);
-		xmm2 = _mm_loadu_si128(s + 2);
-		xmm3 = _mm_loadu_si128(s + 3);
-		xmm4 = _mm_loadu_si128(s + 4);
-		xmm5 = _mm_loadu_si128(s + 5);
-		xmm6 = _mm_loadu_si128(s + 6);
-		xmm7 = _mm_loadu_si128(s + 7);
-		s += 8;
-		_mm_stream_si128(d,	xmm0);
-		_mm_stream_si128(d + 1,	xmm1);
-		_mm_stream_si128(d + 2,	xmm2);
-		_mm_stream_si128(d + 3,	xmm3);
-		_mm_stream_si128(d + 4,	xmm4);
-		_mm_stream_si128(d + 5, xmm5);
-		_mm_stream_si128(d + 6,	xmm6);
-		_mm_stream_si128(d + 7,	xmm7);
-		d += 8;
+	for (size_t i = 0; i < size >> CHUNK_SHIFT; i++) {
+		for (int j = 0; j < CHUNK_COUNT; ++j)
+			xmm[j] = _mm_loadu_si128(s++);
+		for (int j = 0; j < CHUNK_COUNT; ++j)
+			_mm_stream_si128(d++, xmm[j]);
 	}
 
 	_mm_sfence();
+#undef CHUNK_COUNT
 #undef CHUNK_SHIFT
 }
 
@@ -207,36 +191,20 @@ static void
 ntmemcpy512(void *dest, void *src, size_t size)
 {
 #define CHUNK_SHIFT	9
-	__m512i *d;
-	__m512i *s;
-	d = (__m512i *)dest;
-	s = (__m512i *)src;
-	size_t cnt;
-	__m512i xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7;
+#define CHUNK_COUNT     8
+	__m512i *d = (__m512i *)dest;
+	__m512i *s = (__m512i *)src;
+	__m512i xmm[CHUNK_COUNT];
 
-	cnt = size >> CHUNK_SHIFT;
-	for (size_t i = 0; i < cnt; i++) {
-		xmm0 = _mm512_loadu_si512(s);
-		xmm1 = _mm512_loadu_si512(s + 1);
-		xmm2 = _mm512_loadu_si512(s + 2);
-		xmm3 = _mm512_loadu_si512(s + 3);
-		xmm4 = _mm512_loadu_si512(s + 4);
-		xmm5 = _mm512_loadu_si512(s + 5);
-		xmm6 = _mm512_loadu_si512(s + 6);
-		xmm7 = _mm512_loadu_si512(s + 7);
-		s += 8;
-		_mm512_stream_si512(d, xmm0);
-		_mm512_stream_si512(d + 1, xmm1);
-		_mm512_stream_si512(d + 2, xmm2);
-		_mm512_stream_si512(d + 3, xmm3);
-		_mm512_stream_si512(d + 4, xmm4);
-		_mm512_stream_si512(d + 5, xmm5);
-		_mm512_stream_si512(d + 6, xmm6);
-		_mm512_stream_si512(d + 7, xmm7);
-		d += 8;
+	for (size_t i = 0; i < size >> CHUNK_SHIFT; i++) {
+		for (int j = 0; j < CHUNK_COUNT; ++j)
+			xmm[j] = _mm512_loadu_si512(s++);
+		for (int j = 0; j < CHUNK_COUNT; ++j)
+			_mm512_stream_si512(d++, xmm[j]);
 	}
 
 	_mm_sfence();
+#undef CHUNK_COUNT
 #undef CHUNK_SHIFT
 }
 
@@ -250,6 +218,18 @@ ntmemcpy512_noflush(void *addr, size_t data_size)
 
 	return 0;
 }
+
+static int
+memcpy_noflush(void *addr, size_t data_size)
+{
+	for (size_t i = 0; i < FSIZE; i += data_size) {
+		char *caddr = (char *)(addr + i);
+		memcpy(caddr, random_data + i, data_size);
+	}
+
+	return 0;
+}
+
 
 static int
 ntmemcpy_noflush(void *addr, size_t data_size)
@@ -352,6 +332,7 @@ static struct scenario scenarios[] = {
 	SCENARIO(read_flushed),
 	SCENARIO(ntstore),
 	SCENARIO(ntmemcpy512_noflush),
+	SCENARIO(memcpy_noflush),
 	{NULL, NULL}
 };
 
@@ -395,9 +376,9 @@ main(int argc, char *argv[])
 	assert(fd != -1);
 	void *addr = mmap(NULL, FSIZE, PROT_READ|PROT_WRITE,
 		MAP_SHARED|MAP_NORESERVE|MAP_POPULATE, fd, 0);
-	fill(addr);
-
 	assert(addr != MAP_FAILED);
+
+	fill(addr);
 
 	/* used for memcpy tests */
 	random_data = malloc(FSIZE);
@@ -417,7 +398,10 @@ main(int argc, char *argv[])
 			((double)start.tv_sec + 1.0e-9 * start.tv_nsec);
 
 		/* time in seconds */
-		printf("%f\n", time);
+		float gigabytes = FSIZE / time / 1024 / 1024 / 1024;
+
+		printf("%fs scenario runtime\n%f gigabytes per second\n", time,
+			gigabytes);
 	}
 
 	munmap(addr, FSIZE);
