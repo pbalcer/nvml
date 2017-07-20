@@ -107,7 +107,7 @@ clflush_rand(void *addr, size_t data_size)
 		size_t i = 0;
 		#pragma omp for private(i)
 		for (i = 0; i < FSIZE; i += CACHELINE) {
-			size_t n = (randf() % FSIZE) / data_size;
+			size_t n = ((randf() % FSIZE) / data_size) * data_size;
 			char *caddr = (char *)(addr + n);
 			*caddr = DATA;
 			_mm_clflush(caddr);
@@ -163,7 +163,7 @@ clflushopt_rand(void *addr, size_t data_size)
 		#pragma omp for private(i)
 		for (i = 0; i < FSIZE; i += data_size) {
 			for (size_t j = i; j < i + data_size; j += CACHELINE) {
-				size_t n = (randf() % FSIZE) / data_size;
+				size_t n = ((randf() % FSIZE) / data_size) * data_size;
 				char *caddr = (char *)(addr + n);
 				*caddr = DATA;
 				_mm_clflushopt(caddr);
@@ -219,6 +219,30 @@ ntmemcpy(void *dest, void *src, size_t size)
 #undef CHUNK_SHIFT
 }
 
+/*
+ * ntmemset -- trivial non-temporal aligned memset
+ */
+static void
+ntmemset(void *dest, int value, size_t size)
+{
+#define CHUNK_SHIFT	7
+#define CHUNK_COUNT     8
+	__m128i s = _mm_set1_epi8((char)value);
+	__m128i *d = (__m128i *)dest;
+
+	for (size_t i = 0; i < size >> CHUNK_SHIFT; i++) {
+		for (int j = 0; j < CHUNK_COUNT; ++j)
+			_mm_stream_si128(d++, s);
+	}
+
+	_mm_sfence();
+#undef CHUNK_COUNT
+#undef CHUNK_SHIFT
+}
+
+/*
+ * ntmemcpy512 -- trivial non-temporal aligned memcpy
+ */
 static void
 ntmemcpy512(void *dest, void *src, size_t size)
 {
@@ -233,6 +257,27 @@ ntmemcpy512(void *dest, void *src, size_t size)
 			xmm[j] = _mm512_loadu_si512(s++);
 		for (int j = 0; j < CHUNK_COUNT; ++j)
 			_mm512_stream_si512(d++, xmm[j]);
+	}
+
+	_mm_sfence();
+#undef CHUNK_COUNT
+#undef CHUNK_SHIFT
+}
+
+/*
+ * ntmemset512 -- trivial non-temporal aligned memset
+ */
+static void
+ntmemset512(void *dest, int value, size_t size)
+{
+#define CHUNK_SHIFT	9
+#define CHUNK_COUNT     8
+	__m512i *d = (__m512i *)dest;
+	__m512i s = _mm512_set1_epi32((char)value);
+
+	for (size_t i = 0; i < size >> CHUNK_SHIFT; i++) {
+		for (int j = 0; j < CHUNK_COUNT; ++j)
+			_mm512_stream_si512(d++, s);
 	}
 
 	_mm_sfence();
@@ -257,6 +302,22 @@ ntmemcpy512_noflush(void *addr, size_t data_size)
 }
 
 static int
+ntmemset512_noflush(void *addr, size_t data_size)
+{
+	#pragma omp parallel if (omp_enabled)
+	{
+		size_t i = 0;
+		#pragma omp for private(i)
+		for (i = 0; i < FSIZE; i += data_size) {
+			char *caddr = (char *)(addr + i);
+			ntmemset512(caddr, 'c', data_size);
+		}
+	}
+
+	return 0;
+}
+
+static int
 memcpy_noflush(void *addr, size_t data_size)
 {
 	#pragma omp parallel if (omp_enabled)
@@ -272,7 +333,6 @@ memcpy_noflush(void *addr, size_t data_size)
 	return 0;
 }
 
-
 static int
 ntmemcpy_noflush(void *addr, size_t data_size)
 {
@@ -283,6 +343,22 @@ ntmemcpy_noflush(void *addr, size_t data_size)
 		for (i = 0; i < FSIZE; i += data_size) {
 			char *caddr = (char *)(addr + i);
 			ntmemcpy(caddr, random_data + i, data_size);
+		}
+	}
+
+	return 0;
+}
+
+static int
+ntmemset_noflush(void *addr, size_t data_size)
+{
+	#pragma omp parallel if (omp_enabled)
+	{
+		size_t i = 0;
+		#pragma omp for private(i)
+		for (i = 0; i < FSIZE; i += data_size) {
+			char *caddr = (char *)(addr + i);
+			ntmemset(caddr, 'c', data_size);
 		}
 	}
 
@@ -398,6 +474,8 @@ static struct scenario scenarios[] = {
 	SCENARIO(ntstore),
 	SCENARIO(ntmemcpy512_noflush),
 	SCENARIO(memcpy_noflush),
+	SCENARIO(ntmemset_noflush),
+	SCENARIO(ntmemset512_noflush),
 	{NULL, NULL}
 };
 
