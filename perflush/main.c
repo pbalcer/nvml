@@ -44,9 +44,11 @@
 #include <emmintrin.h>
 #include <immintrin.h>
 
+static int omp_enabled;
+
 #define ASIZE(array)  (sizeof(array) / sizeof((array)[0]))
 #define ALIGN(val, alignment) ((val) + ((alignment)-1) & ((alignment) - 1))
-#define FSIZE (1ULL << 30) /* 1 gigabyte */
+#define FSIZE (1ULL << 31) /* 1 gigabyte */
 #define SEED (1234)
 #define DATA (5)
 
@@ -83,10 +85,15 @@ static char *random_data;
 static int
 clflush_seq(void *addr, size_t data_size)
 {
-	for (size_t i = 0; i < FSIZE; i += CACHELINE) {
-		char *caddr = (char *)(addr + i);
-		*caddr = DATA;
-		_mm_clflush(caddr);
+	#pragma omp parallel if (omp_enabled)
+	{
+		size_t i = 0;
+		#pragma omp for private(i)
+		for (i = 0; i < FSIZE; i += CACHELINE) {
+			char *caddr = (char *)(addr + i);
+			*caddr = DATA;
+			_mm_clflush(caddr);
+		}
 	}
 
 	return 0;
@@ -95,11 +102,16 @@ clflush_seq(void *addr, size_t data_size)
 static int
 clflush_rand(void *addr, size_t data_size)
 {
-	for (size_t i = 0; i < FSIZE; i += CACHELINE) {
-		size_t n = (randf() % FSIZE) / data_size;
-		char *caddr = (char *)(addr + n);
-		*caddr = DATA;
-		_mm_clflush(caddr);
+	#pragma omp parallel if (omp_enabled)
+	{
+		size_t i = 0;
+		#pragma omp for private(i)
+		for (i = 0; i < FSIZE; i += CACHELINE) {
+			size_t n = (randf() % FSIZE) / data_size;
+			char *caddr = (char *)(addr + n);
+			*caddr = DATA;
+			_mm_clflush(caddr);
+		}
 	}
 
 	return 0;
@@ -108,10 +120,15 @@ clflush_rand(void *addr, size_t data_size)
 static int
 clflush_static(void *addr, size_t data_size)
 {
-	for (size_t i = 0; i < FSIZE; i += CACHELINE) {
-		char *caddr = (char *)(addr);
-		*caddr = DATA;
-		_mm_clflush(caddr);
+	#pragma omp parallel if (omp_enabled)
+	{
+		size_t i = 0;
+		#pragma omp for private(i)
+		for (i = 0; i < FSIZE; i += CACHELINE) {
+			char *caddr = (char *)(addr);
+			*caddr = DATA;
+			_mm_clflush(caddr);
+		}
 	}
 
 	return 0;
@@ -120,13 +137,18 @@ clflush_static(void *addr, size_t data_size)
 static int
 clflushopt_seq(void *addr, size_t data_size)
 {
-	for (size_t i = 0; i < FSIZE; i += data_size) {
-		for (size_t j = i; j < i + data_size; j += CACHELINE) {
-			char *caddr = (char *)(addr + j);
-			*caddr = DATA;
-			_mm_clflushopt(caddr);
+	#pragma omp parallel if (omp_enabled)
+	{
+		size_t i = 0;
+		#pragma omp for private(i)
+		for (i = 0; i < FSIZE; i += data_size) {
+			for (size_t j = i; j < i + data_size; j += CACHELINE) {
+				char *caddr = (char *)(addr + j);
+				*caddr = DATA;
+				_mm_clflushopt(caddr);
+			}
+			_mm_sfence();
 		}
-		_mm_sfence();
 	}
 
 	return 0;
@@ -135,14 +157,19 @@ clflushopt_seq(void *addr, size_t data_size)
 static int
 clflushopt_rand(void *addr, size_t data_size)
 {
-	for (size_t i = 0; i < FSIZE; i += data_size) {
-		for (size_t j = i; j < i + data_size; j += CACHELINE) {
-			size_t n = (randf() % FSIZE) / data_size;
-			char *caddr = (char *)(addr + n);
-			*caddr = DATA;
-			_mm_clflushopt(caddr);
+	#pragma omp parallel if (omp_enabled)
+	{
+		size_t i = 0;
+		#pragma omp for private(i)
+		for (i = 0; i < FSIZE; i += data_size) {
+			for (size_t j = i; j < i + data_size; j += CACHELINE) {
+				size_t n = (randf() % FSIZE) / data_size;
+				char *caddr = (char *)(addr + n);
+				*caddr = DATA;
+				_mm_clflushopt(caddr);
+			}
+			_mm_sfence();
 		}
-		_mm_sfence();
 	}
 
 	return 0;
@@ -151,13 +178,18 @@ clflushopt_rand(void *addr, size_t data_size)
 static int
 clflushopt_static(void *addr, size_t data_size)
 {
-	for (size_t i = 0; i < FSIZE; i += data_size) {
-		for (size_t j = i; j < i + data_size; j += CACHELINE) {
-			char *caddr = (char *)(addr);
-			*caddr = DATA;
-			_mm_clflushopt(caddr);
+	#pragma omp parallel if (omp_enabled)
+	{
+		size_t i = 0;
+		#pragma omp for private(i)
+		for (i = 0; i < FSIZE; i += data_size) {
+			for (size_t j = i; j < i + data_size; j += CACHELINE) {
+				char *caddr = (char *)(addr);
+				*caddr = DATA;
+				_mm_clflushopt(caddr);
+			}
+			_mm_sfence();
 		}
-		_mm_sfence();
 	}
 
 	return 0;
@@ -211,9 +243,14 @@ ntmemcpy512(void *dest, void *src, size_t size)
 static int
 ntmemcpy512_noflush(void *addr, size_t data_size)
 {
-	for (size_t i = 0; i < FSIZE; i += data_size) {
-		char *caddr = (char *)(addr + i);
-		ntmemcpy512(caddr, random_data + i, data_size);
+	#pragma omp parallel if (omp_enabled)
+	{
+		size_t i = 0;
+		#pragma omp for private(i)
+		for (i = 0; i < FSIZE; i += data_size) {
+			char *caddr = (char *)(addr + i);
+			ntmemcpy512(caddr, random_data + i, data_size);
+		}
 	}
 
 	return 0;
@@ -222,9 +259,14 @@ ntmemcpy512_noflush(void *addr, size_t data_size)
 static int
 memcpy_noflush(void *addr, size_t data_size)
 {
-	for (size_t i = 0; i < FSIZE; i += data_size) {
-		char *caddr = (char *)(addr + i);
-		memcpy(caddr, random_data + i, data_size);
+	#pragma omp parallel if (omp_enabled)
+	{
+		size_t i = 0;
+		#pragma omp for private(i)
+		for (i = 0; i < FSIZE; i += data_size) {
+			char *caddr = (char *)(addr + i);
+			memcpy(caddr, random_data + i, data_size);
+		}
 	}
 
 	return 0;
@@ -234,9 +276,14 @@ memcpy_noflush(void *addr, size_t data_size)
 static int
 ntmemcpy_noflush(void *addr, size_t data_size)
 {
-	for (size_t i = 0; i < FSIZE; i += data_size) {
-		char *caddr = (char *)(addr + i);
-		ntmemcpy(caddr, random_data + i, data_size);
+	#pragma omp parallel if (omp_enabled)
+	{
+		size_t i = 0;
+		#pragma omp for private(i)
+		for (i = 0; i < FSIZE; i += data_size) {
+			char *caddr = (char *)(addr + i);
+			ntmemcpy(caddr, random_data + i, data_size);
+		}
 	}
 
 	return 0;
@@ -245,12 +292,17 @@ ntmemcpy_noflush(void *addr, size_t data_size)
 static int
 ntmemcpy_clflush(void *addr, size_t data_size)
 {
-	for (size_t i = 0; i < FSIZE; i += data_size) {
-		char *caddr = (char *)(addr + i);
-		ntmemcpy(caddr, random_data + i, data_size);
-		for (size_t j = i; j < data_size; j += CACHELINE) {
-			char *faddr = (char *)(addr + j);
-			_mm_clflush(faddr);
+	#pragma omp parallel if (omp_enabled)
+	{
+		size_t i = 0;
+		#pragma omp for private(i)
+		for (i = 0; i < FSIZE; i += data_size) {
+			char *caddr = (char *)(addr + i);
+			ntmemcpy(caddr, random_data + i, data_size);
+			for (size_t j = i; j < data_size; j += CACHELINE) {
+				char *faddr = (char *)(addr + j);
+				_mm_clflush(faddr);
+			}
 		}
 	}
 
@@ -260,14 +312,19 @@ ntmemcpy_clflush(void *addr, size_t data_size)
 static int
 ntmemcpy_clflushopt(void *addr, size_t data_size)
 {
-	for (size_t i = 0; i < FSIZE; i += data_size) {
-		char *caddr = (char *)(addr + i);
-		ntmemcpy(caddr, random_data + i, data_size);
-		for (size_t j = i; j < data_size; j += CACHELINE) {
-			char *faddr = (char *)(addr + j);
-			_mm_clflushopt(faddr);
+	#pragma omp parallel if (omp_enabled)
+	{
+		size_t i = 0;
+		#pragma omp for private(i)
+		for (i = 0; i < FSIZE; i += data_size) {
+			char *caddr = (char *)(addr + i);
+			ntmemcpy(caddr, random_data + i, data_size);
+			for (size_t j = i; j < data_size; j += CACHELINE) {
+				char *faddr = (char *)(addr + j);
+				_mm_clflushopt(faddr);
+			}
+			_mm_sfence();
 		}
-		_mm_sfence();
 	}
 
 	return 0;
@@ -278,17 +335,20 @@ read_flushed(void *addr, size_t data_size)
 {
 	char *buf = malloc(data_size);
 	assert(buf != NULL);
+	#pragma omp parallel if (omp_enabled)
+	{
+		size_t i = 0;
+		#pragma omp for private(i)
+		for (i = 0; i < FSIZE; i += data_size) {
+			for (size_t j = i; j < data_size; j += CACHELINE) {
+				char *faddr = (char *)(addr + j);
+				_mm_clflushopt(faddr);
+			}
+			_mm_sfence();
 
-	for (size_t i = 0; i < FSIZE; i += data_size) {
-
-		for (size_t j = i; j < data_size; j += CACHELINE) {
-			char *faddr = (char *)(addr + j);
-			_mm_clflushopt(faddr);
+			char *caddr = (char *)(addr + i);
+			ntmemcpy(buf, caddr, data_size);
 		}
-		_mm_sfence();
-
-		char *caddr = (char *)(addr + i);
-		ntmemcpy(buf, caddr, data_size);
 	}
 
 	free(buf);
@@ -299,10 +359,15 @@ read_flushed(void *addr, size_t data_size)
 static int
 ntstore(void *addr, size_t data_size)
 {
-	for (size_t i = 0; i < FSIZE; i += CACHELINE) {
-		long long *caddr = (long long *)(addr);
-		_mm_stream_si64(caddr, DATA);
-		_mm_sfence();
+	#pragma omp parallel if (omp_enabled)
+	{
+		size_t i = 0;
+		#pragma omp for private(i)
+		for (i = 0; i < FSIZE; i += CACHELINE) {
+			long long *caddr = (long long *)(addr);
+			_mm_stream_si64(caddr, DATA);
+			_mm_sfence();
+		}
 	}
 
 	return 0;
@@ -365,12 +430,14 @@ int
 main(int argc, char *argv[])
 {
 	if (argc < 4) {
-		printf("usage: %s path scenario data_size\n", argv[0]);
+		printf("usage: %s path scenario data_size [omp?]\n", argv[0]);
 		return -1;
 	}
 	char *path = argv[1];
 	char *scenario = argv[2];
 	size_t data_size = (size_t)atoi(argv[3]);
+	if (argc == 5)
+		omp_enabled = atoi(argv[4]) == 1 ? 1 : 0;
 
 	int fd = open(path, O_RDWR);
 	assert(fd != -1);
