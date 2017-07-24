@@ -52,6 +52,8 @@ static int omp_enabled;
 #define SEED (1234)
 #define DATA (5)
 
+#define READ_BUFFER_ALIGNMENT 512
+
 #define _mm_clflushopt(addr)\
 asm volatile(".byte 0x66; clflush %0" : "+m" (*(volatile char *)(addr)));
 #define _mm_clwb(addr)\
@@ -415,7 +417,7 @@ read_flushed(void *addr, size_t data_size)
 	char *buf;
 	#pragma omp parallel if (omp_enabled) private (buf)
 	{
-		buf = malloc(data_size);
+		buf = aligned_alloc(READ_BUFFER_ALIGNMENT, data_size);
 		assert(buf != NULL);
 
 		size_t i = 0;
@@ -443,7 +445,7 @@ read_noflush(void *addr, size_t data_size)
 	char *buf;
 	#pragma omp parallel if (omp_enabled) private (buf)
 	{
-		buf = malloc(data_size);
+		buf = aligned_alloc(READ_BUFFER_ALIGNMENT, data_size);
 		assert(buf != NULL);
 
 		size_t i = 0;
@@ -465,7 +467,7 @@ read512_noflush(void *addr, size_t data_size)
 	char *buf;
 	#pragma omp parallel if (omp_enabled) private (buf)
 	{
-		buf = malloc(data_size);
+		buf = aligned_alloc(READ_BUFFER_ALIGNMENT, data_size);
 		assert(buf != NULL);
 
 		size_t i = 0;
