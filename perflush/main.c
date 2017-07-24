@@ -412,10 +412,12 @@ ntmemcpy_clflushopt(void *addr, size_t data_size)
 static int
 read_flushed(void *addr, size_t data_size)
 {
-	char *buf = malloc(data_size);
-	assert(buf != NULL);
-	#pragma omp parallel if (omp_enabled)
+	char *buf;
+	#pragma omp parallel if (omp_enabled) private (buf)
 	{
+		buf = malloc(data_size);
+		assert(buf != NULL);
+
 		size_t i = 0;
 		#pragma omp for private (i)
 		for (i = 0; i < FSIZE; i += data_size) {
@@ -428,9 +430,53 @@ read_flushed(void *addr, size_t data_size)
 			char *caddr = (char *)(addr + i);
 			ntmemcpy(buf, caddr, data_size);
 		}
+
+		free(buf);
 	}
 
-	free(buf);
+	return 0;
+}
+
+static int
+read_noflush(void *addr, size_t data_size)
+{
+	char *buf;
+	#pragma omp parallel if (omp_enabled) private (buf)
+	{
+		buf = malloc(data_size);
+		assert(buf != NULL);
+
+		size_t i = 0;
+		#pragma omp for private (i)
+		for (i = 0; i < FSIZE; i += data_size) {
+			char *caddr = (char *)(addr + i);
+			ntmemcpy(buf, caddr, data_size);
+		}
+
+		free(buf);
+	}
+
+	return 0;
+}
+
+static int
+read512_noflush(void *addr, size_t data_size)
+{
+	char *buf;
+	#pragma omp parallel if (omp_enabled) private (buf)
+	{
+		buf = malloc(data_size);
+		assert(buf != NULL);
+
+		size_t i = 0;
+		#pragma omp for private (i)
+		for (i = 0; i < FSIZE; i += data_size) {
+			char *caddr = (char *)(addr + i);
+			ntmemcpy512(buf, caddr, data_size);
+		}
+
+		free(buf);
+	}
 
 	return 0;
 }
@@ -479,6 +525,8 @@ static struct scenario scenarios[] = {
 	SCENARIO(memcpy_noflush),
 	SCENARIO(ntmemset_noflush),
 	SCENARIO(ntmemset512_noflush),
+	SCENARIO(read_noflush),
+	SCENARIO(read512_noflush),
 	{NULL, NULL}
 };
 
