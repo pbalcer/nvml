@@ -48,7 +48,7 @@ static int omp_enabled;
 
 #define ASIZE(array)  (sizeof(array) / sizeof((array)[0]))
 #define ALIGN(val, alignment) ((val) + ((alignment)-1) & ((alignment) - 1))
-#define FSIZE (1ULL << 31) /* 1 gigabyte */
+#define FSIZE (1ULL << 30) /* 1 gigabyte */
 #define SEED (1234)
 #define DATA (5)
 
