@@ -66,6 +66,7 @@ endif
 ifeq ($(call check_flag, -Wmissing-variable-declarations), y)
 CFLAGS += -Wmissing-variable-declarations
 endif
+CFLAGS += -mavx512f
 
 ifeq ($(DEBUG),1)
 CFLAGS += -O0 -ggdb -DDEBUG $(EXTRA_CFLAGS_DEBUG)

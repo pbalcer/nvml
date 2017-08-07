@@ -984,6 +984,233 @@ memmove_nodrain_movnt(void *pmemdest, const void *src, size_t len)
 	return pmemdest;
 }
 
+#include <emmintrin.h>
+#include <immintrin.h>
+
+/*
+ * memmove512_nodrain_movnt -- (internal) memmove to pmem without hw drain, movnt
+ */
+static void *
+memmove512_nodrain_movnt(void *pmemdest, const void *src, size_t len)
+{
+	LOG(15, "pmemdest %p src %p len %zu", pmemdest, src, len);
+
+#define AVX512_CHUNK_SHIFT 9
+#define AVX512_CHUNK_SIZE 512
+#define AVX512_CHUNK_MASK (AVX512_CHUNK_SIZE - 1)
+#define AVX512_MOVNT_SIZE	64
+#define AVX512_MOVNT_MASK	(AVX512_MOVNT_SIZE - 1)
+#define AVX512_MOVNT_SHIFT	6
+
+	__m512i xmm0, xmm1, xmm2, xmm3, xmm4, xmm5, xmm6, xmm7;
+	size_t i;
+	__m512i *d;
+	__m512i *s;
+	void *dest1 = pmemdest;
+	size_t cnt;
+
+	if (len == 0 || src == pmemdest)
+		return pmemdest;
+
+	if (len < Movnt_threshold) {
+		memmove(pmemdest, src, len);
+		pmem_flush(pmemdest, len);
+		return pmemdest;
+	}
+
+	if ((uintptr_t)dest1 - (uintptr_t)src >= len) {
+		/*
+		 * Copy the range in the forward direction.
+		 *
+		 * This is the most common, most optimized case, used unless
+		 * the overlap specifically prevents it.
+		 */
+
+		/* copy up to FLUSH_ALIGN boundary */
+		cnt = (uint64_t)dest1 & ALIGN_MASK;
+		if (cnt > 0) {
+			cnt = FLUSH_ALIGN - cnt;
+
+			/* never try to copy more the len bytes */
+			if (cnt > len)
+				cnt = len;
+
+			uint8_t *d8 = (uint8_t *)dest1;
+			const uint8_t *s8 = (uint8_t *)src;
+			for (i = 0; i < cnt; i++) {
+				*d8 = *s8;
+				d8++;
+				s8++;
+			}
+			pmem_flush(dest1, cnt);
+			dest1 = (char *)dest1 + cnt;
+			src = (char *)src + cnt;
+			len -= cnt;
+		}
+
+		d = (__m512i *)dest1;
+		s = (__m512i *)src;
+
+		cnt = len >> AVX512_CHUNK_SHIFT;
+		for (i = 0; i < cnt; i++) {
+			xmm0 = _mm512_loadu_si512(s);
+			xmm1 = _mm512_loadu_si512(s + 1);
+			xmm2 = _mm512_loadu_si512(s + 2);
+			xmm3 = _mm512_loadu_si512(s + 3);
+			xmm4 = _mm512_loadu_si512(s + 4);
+			xmm5 = _mm512_loadu_si512(s + 5);
+			xmm6 = _mm512_loadu_si512(s + 6);
+			xmm7 = _mm512_loadu_si512(s + 7);
+			s += 8;
+			_mm512_stream_si512(d,	xmm0);
+			_mm512_stream_si512(d + 1,	xmm1);
+			_mm512_stream_si512(d + 2,	xmm2);
+			_mm512_stream_si512(d + 3,	xmm3);
+			_mm512_stream_si512(d + 4,	xmm4);
+			_mm512_stream_si512(d + 5, xmm5);
+			_mm512_stream_si512(d + 6,	xmm6);
+			_mm512_stream_si512(d + 7,	xmm7);
+			VALGRIND_DO_FLUSH(d, 8 * sizeof(*d));
+			d += 8;
+		}
+
+		/* copy the tail (<128 bytes) in 16 bytes chunks */
+		len &= AVX512_CHUNK_MASK;
+		if (len != 0) {
+			cnt = len >> AVX512_MOVNT_SHIFT;
+			for (i = 0; i < cnt; i++) {
+				xmm0 = _mm512_loadu_si512(s);
+				_mm512_stream_si512(d, xmm0);
+				VALGRIND_DO_FLUSH(d, sizeof(*d));
+				s++;
+				d++;
+			}
+		}
+
+		/* copy the last bytes (<16), first dwords then bytes */
+		len &= AVX512_MOVNT_MASK;
+		if (len != 0) {
+			cnt = len >> DWORD_SHIFT;
+			int32_t *d32 = (int32_t *)d;
+			int32_t *s32 = (int32_t *)s;
+			for (i = 0; i < cnt; i++) {
+				_mm_stream_si32(d32, *s32);
+				VALGRIND_DO_FLUSH(d32, sizeof(*d32));
+				d32++;
+				s32++;
+			}
+			cnt = len & DWORD_MASK;
+			uint8_t *d8 = (uint8_t *)d32;
+			const uint8_t *s8 = (uint8_t *)s32;
+
+			for (i = 0; i < cnt; i++) {
+				*d8 = *s8;
+				d8++;
+				s8++;
+			}
+			pmem_flush(d32, cnt);
+		}
+	} else {
+		/*
+		 * Copy the range in the backward direction.
+		 *
+		 * This prevents overwriting source data due to an
+		 * overlapped destination range.
+		 */
+
+		dest1 = (char *)dest1 + len;
+		src = (char *)src + len;
+
+		cnt = (uint64_t)dest1 & ALIGN_MASK;
+		if (cnt > 0) {
+			/* never try to copy more the len bytes */
+			if (cnt > len)
+				cnt = len;
+
+			uint8_t *d8 = (uint8_t *)dest1;
+			const uint8_t *s8 = (uint8_t *)src;
+			for (i = 0; i < cnt; i++) {
+				d8--;
+				s8--;
+				*d8 = *s8;
+			}
+			pmem_flush(d8, cnt);
+			dest1 = (char *)dest1 - cnt;
+			src = (char *)src - cnt;
+			len -= cnt;
+		}
+
+		d = (__m512i *)dest1;
+		s = (__m512i *)src;
+
+		cnt = len >> AVX512_CHUNK_SHIFT;
+		for (i = 0; i < cnt; i++) {
+			xmm0 = _mm512_loadu_si512(s - 1);
+			xmm1 = _mm512_loadu_si512(s - 2);
+			xmm2 = _mm512_loadu_si512(s - 3);
+			xmm3 = _mm512_loadu_si512(s - 4);
+			xmm4 = _mm512_loadu_si512(s - 5);
+			xmm5 = _mm512_loadu_si512(s - 6);
+			xmm6 = _mm512_loadu_si512(s - 7);
+			xmm7 = _mm512_loadu_si512(s - 8);
+			s -= 8;
+			_mm512_stream_si512(d - 1, xmm0);
+			_mm512_stream_si512(d - 2, xmm1);
+			_mm512_stream_si512(d - 3, xmm2);
+			_mm512_stream_si512(d - 4, xmm3);
+			_mm512_stream_si512(d - 5, xmm4);
+			_mm512_stream_si512(d - 6, xmm5);
+			_mm512_stream_si512(d - 7, xmm6);
+			_mm512_stream_si512(d - 8, xmm7);
+			d -= 8;
+			VALGRIND_DO_FLUSH(d, 8 * sizeof(*d));
+		}
+
+		/* copy the tail (<128 bytes) in 16 bytes chunks */
+		len &= AVX512_CHUNK_MASK;
+		if (len != 0) {
+			cnt = len >> AVX512_MOVNT_SHIFT;
+			for (i = 0; i < cnt; i++) {
+				d--;
+				s--;
+				xmm0 = _mm512_loadu_si512(s);
+				_mm512_stream_si512(d, xmm0);
+				VALGRIND_DO_FLUSH(d, sizeof(*d));
+			}
+		}
+
+		/* copy the last bytes (<16), first dwords then bytes */
+		len &= AVX512_MOVNT_MASK;
+		if (len != 0) {
+			cnt = len >> DWORD_SHIFT;
+			int32_t *d32 = (int32_t *)d;
+			int32_t *s32 = (int32_t *)s;
+			for (i = 0; i < cnt; i++) {
+				d32--;
+				s32--;
+				_mm_stream_si32(d32, *s32);
+				VALGRIND_DO_FLUSH(d32, sizeof(*d32));
+			}
+
+			cnt = len & DWORD_MASK;
+			uint8_t *d8 = (uint8_t *)d32;
+			const uint8_t *s8 = (uint8_t *)s32;
+
+			for (i = 0; i < cnt; i++) {
+				d8--;
+				s8--;
+				*d8 = *s8;
+			}
+			pmem_flush(d8, cnt);
+		}
+	}
+
+	/* serialize non-temporal store instructions */
+	predrain_fence_sfence();
+
+	return pmemdest;
+}
+
 /*
  * pmem_memmove_nodrain() calls through Func_memmove_nodrain to do the work.
  * Although initialized to memmove_nodrain_normal(), once the existence of the
@@ -992,7 +1219,8 @@ memmove_nodrain_movnt(void *pmemdest, const void *src, size_t len)
  * common case on modern hardware that supports persistent memory.
  */
 static void *(*Func_memmove_nodrain)
-	(void *pmemdest, const void *src, size_t len) = memmove_nodrain_normal;
+	(void *pmemdest, const void *src, size_t len) =
+		memmove512_nodrain_movnt;
 
 /*
  * pmem_memmove_nodrain -- memmove to pmem without hw drain
@@ -1204,6 +1432,8 @@ pmem_log_cpuinfo(void)
 		LOG(3, "using movnt");
 	else if (Func_memmove_nodrain == memmove_nodrain_normal)
 		LOG(3, "not using movnt");
+	else if (Func_memmove_nodrain == memmove512_nodrain_movnt)
+		LOG(3, "using movnt512");
 	else
 		FATAL("invalid memove_nodrain function address");
 }
@@ -1285,7 +1515,7 @@ pmem_init(void)
 	if (ptr && strcmp(ptr, "1") == 0)
 		LOG(3, "PMEM_NO_MOVNT forced no movnt");
 	else {
-		Func_memmove_nodrain = memmove_nodrain_movnt;
+		Func_memmove_nodrain = memmove512_nodrain_movnt;
 		Func_memset_nodrain = memset_nodrain_movnt;
 	}
 

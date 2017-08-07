@@ -205,6 +205,7 @@ COMMON_FLAGS += -Werror
 COMMON_FLAGS += -Wpointer-arith
 COMMON_FLAGS += -Wunused-macros
 COMMON_FLAGS += -fno-common
+COMMON_FLAGS += -mavx512f
 
 CXXFLAGS  = -std=c++11
 CXXFLAGS += -ggdb
