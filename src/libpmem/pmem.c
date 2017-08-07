@@ -1374,6 +1374,99 @@ memset_nodrain_movnt(void *pmemdest, int c, size_t len)
 	return pmemdest;
 }
 
+
+/*
+ * memset512_nodrain_movnt -- (internal) memset to pmem without hw drain, movnt
+ */
+static void *
+memset512_nodrain_movnt(void *pmemdest, int c, size_t len)
+{
+	LOG(15, "pmemdest %p c 0x%x len %zu", pmemdest, c, len);
+
+	size_t i;
+	void *dest1 = pmemdest;
+	size_t cnt;
+	__m512i xmm0;
+	__m512i *d;
+
+	if (len < Movnt_threshold) {
+		memset(pmemdest, c, len);
+		pmem_flush(pmemdest, len);
+		return pmemdest;
+	}
+
+	/* memset up to the next FLUSH_ALIGN boundary */
+	cnt = (uint64_t)dest1 & ALIGN_MASK;
+	if (cnt != 0) {
+		cnt = FLUSH_ALIGN - cnt;
+
+		if (cnt > len)
+			cnt = len;
+
+		memset(dest1, c, cnt);
+		pmem_flush(dest1, cnt);
+		len -= cnt;
+		dest1 = (char *)dest1 + cnt;
+	}
+
+	xmm0 = _mm512_set1_epi8((char)c);
+
+	d = (__m512i *)dest1;
+	cnt = len / AVX512_CHUNK_SIZE;
+	if (cnt != 0) {
+		for (i = 0; i < cnt; i++) {
+			_mm512_stream_si512(d, xmm0);
+			_mm512_stream_si512(d + 1, xmm0);
+			_mm512_stream_si512(d + 2, xmm0);
+			_mm512_stream_si512(d + 3, xmm0);
+			_mm512_stream_si512(d + 4, xmm0);
+			_mm512_stream_si512(d + 5, xmm0);
+			_mm512_stream_si512(d + 6, xmm0);
+			_mm512_stream_si512(d + 7, xmm0);
+			VALGRIND_DO_FLUSH(d, 8 * sizeof(*d));
+			d += 8;
+		}
+	}
+	/* memset the tail (<128 bytes) in 16 bytes chunks */
+	len &= AVX512_CHUNK_MASK;
+	if (len != 0) {
+		cnt = len >> AVX512_MOVNT_SHIFT;
+		for (i = 0; i < cnt; i++) {
+			_mm512_stream_si512(d, xmm0);
+			VALGRIND_DO_FLUSH(d, sizeof(*d));
+			d++;
+		}
+	}
+
+	/* memset the last bytes (<16), first dwords then bytes */
+	len &= AVX512_MOVNT_MASK;
+	if (len != 0) {
+		__m128i xmm1 = _mm_set1_epi8((char)c);
+		int32_t *d32 = (int32_t *)d;
+		cnt = len >> DWORD_SHIFT;
+		if (cnt != 0) {
+			for (i = 0; i < cnt; i++) {
+				_mm_stream_si32(d32,
+					_mm_cvtsi128_si32(xmm1));
+				VALGRIND_DO_FLUSH(d32, sizeof(*d32));
+				d32++;
+			}
+		}
+
+		/* at this point the cnt < 16 so use memset */
+		cnt = len & DWORD_MASK;
+		if (cnt != 0) {
+			memset((void *)d32, c, cnt);
+			pmem_flush(d32, cnt);
+		}
+	}
+
+	/* serialize non-temporal store instructions */
+	predrain_fence_sfence();
+
+	return pmemdest;
+}
+
 /*
  * pmem_memset_nodrain() calls through Func_memset_nodrain to do the work.
  * Although initialized to memset_nodrain_normal(), once the existence of the
@@ -1382,7 +1475,7 @@ memset_nodrain_movnt(void *pmemdest, int c, size_t len)
  * common case on modern hardware that supports persistent memory.
  */
 static void *(*Func_memset_nodrain)
-	(void *pmemdest, int c, size_t len) = memset_nodrain_normal;
+	(void *pmemdest, int c, size_t len) = memset512_nodrain_movnt;
 
 /*
  * pmem_memset_nodrain -- memset to pmem without hw drain
@@ -1516,7 +1609,7 @@ pmem_init(void)
 		LOG(3, "PMEM_NO_MOVNT forced no movnt");
 	else {
 		Func_memmove_nodrain = memmove512_nodrain_movnt;
-		Func_memset_nodrain = memset_nodrain_movnt;
+		Func_memset_nodrain = memset512_nodrain_movnt;
 	}
 
 	pmem_log_cpuinfo();
