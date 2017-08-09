@@ -52,7 +52,7 @@ static int omp_enabled;
 #define SEED (1234)
 #define DATA (5)
 
-#define READ_BUFFER_ALIGNMENT 512
+#define IO_BUFFER_ALIGNMENT 512
 
 #define _mm_clflushopt(addr)\
 asm volatile(".byte 0x66; clflush %0" : "+m" (*(volatile char *)(addr)));
@@ -108,6 +108,29 @@ ntmemcpy(void *dest, void *src, size_t size)
 }
 
 /*
+ * ntmemcpy_store -- trivial non-temporal aligned memcpy
+ */
+static void
+ntmemcpy_store(void *dest, void *src, size_t size)
+{
+#define CHUNK_SHIFT	7
+#define CHUNK_COUNT     8
+	__m128i *d = (__m128i *)dest;
+	__m128i *s = (__m128i *)src;
+	__m128i xmm[CHUNK_COUNT];
+
+	for (size_t i = 0; i < size >> CHUNK_SHIFT; i++) {
+		for (int j = 0; j < CHUNK_COUNT; ++j)
+			xmm[j] = _mm_load_si128(s++);
+		for (int j = 0; j < CHUNK_COUNT; ++j)
+			_mm_store_si128(d++, xmm[j]);
+	}
+
+#undef CHUNK_COUNT
+#undef CHUNK_SHIFT
+}
+
+/*
  * ntmemset -- trivial non-temporal aligned memset
  */
 static void
@@ -148,6 +171,29 @@ ntmemcpy512(void *dest, void *src, size_t size)
 	}
 
 	_mm_sfence();
+#undef CHUNK_COUNT
+#undef CHUNK_SHIFT
+}
+
+/*
+ * ntmemcpy_store512 -- trivial non-temporal aligned memcpy using store
+ */
+static void
+ntmemcpy_store512(void *dest, void *src, size_t size)
+{
+#define CHUNK_SHIFT	9
+#define CHUNK_COUNT     8
+	__m512i *d = (__m512i *)dest;
+	__m512i *s = (__m512i *)src;
+	__m512i xmm[CHUNK_COUNT];
+
+	for (size_t i = 0; i < size >> CHUNK_SHIFT; i++) {
+		for (int j = 0; j < CHUNK_COUNT; ++j)
+			xmm[j] = _mm512_load_si512(s++);
+		for (int j = 0; j < CHUNK_COUNT; ++j)
+			_mm512_store_si512(d++, xmm[j]);
+	}
+
 #undef CHUNK_COUNT
 #undef CHUNK_SHIFT
 }
@@ -417,7 +463,7 @@ read_flushed(void *addr, size_t data_size)
 	char *buf;
 	#pragma omp parallel if (omp_enabled) private (buf)
 	{
-		buf = aligned_alloc(READ_BUFFER_ALIGNMENT, data_size);
+		buf = aligned_alloc(IO_BUFFER_ALIGNMENT, data_size);
 		assert(buf != NULL);
 
 		size_t i = 0;
@@ -445,14 +491,14 @@ read_noflush(void *addr, size_t data_size)
 	char *buf;
 	#pragma omp parallel if (omp_enabled) private (buf)
 	{
-		buf = aligned_alloc(READ_BUFFER_ALIGNMENT, data_size);
+		buf = aligned_alloc(IO_BUFFER_ALIGNMENT, data_size);
 		assert(buf != NULL);
 
 		size_t i = 0;
 		#pragma omp for private (i)
 		for (i = 0; i < FSIZE; i += data_size) {
 			char *caddr = (char *)(addr + i);
-			ntmemcpy(buf, caddr, data_size);
+			ntmemcpy_store(buf, caddr, data_size);
 		}
 
 		free(buf);
@@ -467,14 +513,14 @@ read512_noflush(void *addr, size_t data_size)
 	char *buf;
 	#pragma omp parallel if (omp_enabled) private (buf)
 	{
-		buf = aligned_alloc(READ_BUFFER_ALIGNMENT, data_size);
+		buf = aligned_alloc(IO_BUFFER_ALIGNMENT, data_size);
 		assert(buf != NULL);
 
 		size_t i = 0;
 		#pragma omp for private (i)
 		for (i = 0; i < FSIZE; i += data_size) {
 			char *caddr = (char *)(addr + i);
-			ntmemcpy512(buf, caddr, data_size);
+			ntmemcpy_store512(buf, caddr, data_size);
 		}
 
 		free(buf);
@@ -579,7 +625,7 @@ main(int argc, char *argv[])
 	fill(addr);
 
 	/* used for memcpy tests */
-	random_data = malloc(FSIZE);
+	random_data = aligned_alloc(IO_BUFFER_ALIGNMENT, FSIZE);
 	assert(random_data != NULL);
 	for (size_t i = 0; i < FSIZE; ++i) {
 		/* not really random, but doesn't matter */
