@@ -151,3 +151,7 @@ run_scenarios() {
 	run_scenarios_1_2 $@
 	clear_scenarios $@
 }
+
+# XXX
+pass
+exit 0
