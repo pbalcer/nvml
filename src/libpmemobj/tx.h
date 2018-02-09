@@ -71,8 +71,8 @@ enum undo_types {
 };
 
 struct lane_tx_layout {
-	uint64_t state;
 	struct pvector undo_log[MAX_UNDO_TYPES];
+	uint64_t state;
 };
 
 struct tx_parameters;

@@ -64,14 +64,13 @@
 struct pvector_context;
 
 struct pvector {
-	uint64_t arrays[PVECTOR_MAX_ARRAYS]; /* offset to the array object */
-
 	/*
 	 * Because the assumption is that most of the vector uses won't exceed
 	 * a relatively small number of entries, the first array is embedded
 	 * directly into the structure.
 	 */
 	uint64_t embedded[PVECTOR_INIT_SIZE];
+	uint64_t arrays[PVECTOR_MAX_ARRAYS]; /* offset to the array object */
 };
 
 typedef void (*entry_op_callback)(PMEMobjpool *pop, uint64_t *entry);

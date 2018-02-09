@@ -315,7 +315,7 @@ alloc_class_from_params(struct alloc_class_collection *ac,
 	struct alloc_class c;
 
 	c.unit_size = unit_size;
-	c.header_type = HEADER_COMPACT;
+	c.header_type = HEADER_LEGACY;
 	c.type = type;
 
 	switch (type) {

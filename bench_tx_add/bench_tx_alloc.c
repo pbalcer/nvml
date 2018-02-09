@@ -28,7 +28,7 @@ int main(int argc, char *argv[])
 	pmemobj_ctl_set(NULL, "prefault.at_create", &j);
 	pmemobj_ctl_set(NULL, "prefault.at_open", &j);
 
-	PMEMobjpool *pop = pmemobj_create(argv[1], "bla", (1ULL<<30) * 4, 0655);
+	PMEMobjpool *pop = pmemobj_create(argv[1], "bla", (1ULL<<30) * 7, 0655);
 //	PMEMobjpool *pop = pmemobj_open(argv[1], "bla");
 	if (!pop) {
 		perror("create");

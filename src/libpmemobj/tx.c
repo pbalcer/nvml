@@ -764,22 +764,33 @@ tx_fulfill_reservations(struct tx *tx)
 	PMEMobjpool *pop = tx->pop;
 
 	uint64_t *fentry = NULL;
-	size_t sizesum = 0;
+
+	uint64_t cl[8] = {0};
+	size_t clpos = 0;
 
 	int i;
 	for (i = 0; i < lane->actvcnt; ++i) {
 		uint64_t *entry = pvector_push_back(lane->undo.ctx[UNDO_ALLOC]);
+		ASSERTne(entry, NULL);
+		size_t sizesum = clpos*sizeof(*entry);
 
 		/* flush if switched to a new vector array */
-		if ((uintptr_t)fentry + sizesum != (uintptr_t)entry) {
-			if (fentry != NULL)
+		if ((uintptr_t)fentry + sizesum != (uintptr_t)entry || clpos == 8) {
+			if (fentry != NULL) {
+				ASSERTeq((uintptr_t)fentry % 64, 0);
+				memset(cl + clpos, 0, 64 - sizesum);
+				memcpy(fentry, cl, 64);
 				pmemops_flush(&pop->p_ops, fentry, sizesum);
+			}
 			fentry = entry;
-			sizesum = 0;
+			clpos = 0;
 		}
-		*entry = lane->alloc_actv[i].heap.offset;
-		sizesum += sizeof(*entry);
+		cl[clpos++] = lane->alloc_actv[i].heap.offset;
 	}
+	ASSERTeq((uintptr_t)fentry % 64, 0);
+	size_t sizesum = clpos*sizeof(uint64_t);
+	memset(cl + clpos, 0, 64 - sizesum);
+	memcpy(fentry, cl, 64);
 	pmemops_persist(&pop->p_ops, fentry, sizesum);
 
 	struct redo_log *redo = pmalloc_redo_hold(pop);
