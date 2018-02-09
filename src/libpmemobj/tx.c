@@ -779,8 +779,7 @@ tx_fulfill_reservations(struct tx *tx)
 			if (fentry != NULL) {
 				ASSERTeq((uintptr_t)fentry % 64, 0);
 				memset(cl + clpos, 0, 64 - sizesum);
-//				memcpy(fentry, cl, 64);
-				pmemops_memcpy_persist(&pop->p_ops, fentry, cl, sizesum);
+				pmemops_memcpy_persist(&pop->p_ops, fentry, cl, 64);
 			}
 			fentry = entry;
 			clpos = 0;
