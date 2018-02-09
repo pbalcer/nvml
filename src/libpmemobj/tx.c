@@ -779,8 +779,8 @@ tx_fulfill_reservations(struct tx *tx)
 			if (fentry != NULL) {
 				ASSERTeq((uintptr_t)fentry % 64, 0);
 				memset(cl + clpos, 0, 64 - sizesum);
-				memcpy(fentry, cl, 64);
-				pmemops_flush(&pop->p_ops, fentry, sizesum);
+//				memcpy(fentry, cl, 64);
+				pmemops_memcpy_persist(&pop->p_ops, fentry, cl, sizesum);
 			}
 			fentry = entry;
 			clpos = 0;
@@ -790,8 +790,7 @@ tx_fulfill_reservations(struct tx *tx)
 	ASSERTeq((uintptr_t)fentry % 64, 0);
 	size_t sizesum = clpos*sizeof(uint64_t);
 	memset(cl + clpos, 0, 64 - sizesum);
-	memcpy(fentry, cl, 64);
-	pmemops_persist(&pop->p_ops, fentry, sizesum);
+	pmemops_memcpy_persist(&pop->p_ops, fentry, cl, 64);
 
 	struct redo_log *redo = pmalloc_redo_hold(pop);
 
