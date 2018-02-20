@@ -1787,6 +1787,116 @@ vg_verify_initialized(PMEMobjpool *pop, const struct tx_range_def *def)
 #endif
 }
 
+
+/*
+ * pmemobj_tx_add_common -- (internal) common code for adding persistent memory
+ *				into the transaction
+ */
+static int
+pmemobj_tx_add_common(struct tx *tx, struct tx_range_def *args)
+{
+	LOG(15, NULL);
+
+	if (args->size > PMEMOBJ_MAX_ALLOC_SIZE) {
+		ERR("snapshot size too large");
+		return obj_tx_abort_err(EINVAL);
+	}
+
+	if (args->offset < tx->pop->heap_offset ||
+		(args->offset + args->size) >
+		(tx->pop->heap_offset + tx->pop->heap_size)) {
+		ERR("object outside of heap");
+		return obj_tx_abort_err(EINVAL);
+	}
+
+	struct lane_tx_runtime *runtime = tx->section->runtime;
+
+	/* starting from the end, search for all overlapping ranges */
+	int ret = 0;
+
+	struct tx_range_def adef;
+	adef.flags = args->flags;
+	adef.offset = 0;
+	adef.size = 0;
+
+	struct tx_range_def sdef;
+	sdef.flags = 0;
+	sdef.offset = args->offset + args->size - 1;
+	sdef.size = 0;
+
+	while (sdef.offset >= args->offset) {
+		adef.offset = sdef.offset + 1;
+		/* find range less than starting point */
+		struct ravl_node *n = ravl_find(runtime->ranges, &sdef,
+			RAVL_PREDICATE_LESS_EQUAL);
+
+		if (n != NULL) {
+			sdef = *(struct tx_range_def *)ravl_data(n);
+		} else {
+			sdef.offset = 0;
+			sdef.size = 0;
+		}
+
+		struct tx_range_def ndef;
+		ndef.flags = args->flags;
+		ndef.offset = 0;
+		ndef.size = 0;
+
+		/* the found offset is earlier */
+		if (sdef.offset < args->offset) {
+			ndef.size = adef.offset - args->offset;
+			/* overlap on the left edge */
+			if (sdef.offset + sdef.size > args->offset) {
+				ndef.offset = sdef.offset + sdef.size;
+				if (ndef.size <= ndef.offset - args->offset)
+					break;
+				ndef.size -= ndef.offset - args->offset;
+			} else {
+				ndef.offset = args->offset;
+			}
+
+			if (args->size == 0)
+				break;
+
+			sdef.offset = 0; /* this is the end of our search */
+		} else { /* found offset is equal or greater than offset */
+			ndef.offset = sdef.offset + sdef.size;
+			sdef.offset -= 1;
+			if (ndef.offset >= adef.offset)
+				continue;
+
+			ndef.size = adef.offset - ndef.offset;
+		}
+
+		ret = tx_lane_ranges_insert_def(runtime, &ndef);
+		if (ret != 0) {
+			if (ret == EEXIST)
+				FATAL("invalid state of ranges tree");
+
+			break;
+		}
+		vg_verify_initialized(tx->pop, &ndef);
+
+		/*
+		 * Depending on the size of the block, either allocate an
+		 * entire new object or use cache.
+		 */
+		ret = ndef.size > tx->pop->tx_params->cache_threshold ?
+			pmemobj_tx_add_large(tx, &ndef) :
+			pmemobj_tx_add_small(tx, &ndef);
+
+		if (ret != 0)
+			break;
+	}
+
+	if (ret != 0) {
+		ERR("out of memory");
+		return obj_tx_abort_err(ENOMEM);
+	}
+
+	return 0;
+}
+#if 0
 /*
  * pmemobj_tx_add_common -- (internal) common code for adding persistent memory
  *				into the transaction
@@ -1899,6 +2009,7 @@ pmemobj_tx_add_common(struct tx *tx, struct tx_range_def *args)
 
 	return 0;
 }
+#endif
 
 /*
  * pmemobj_tx_add_range_direct -- adds persistent memory range into the
