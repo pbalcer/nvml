@@ -106,7 +106,7 @@ struct lane_descriptor {
 };
 
 typedef int (*section_layout_op)(PMEMobjpool *pop, void *data, unsigned length);
-typedef void *(*section_constr)(PMEMobjpool *pop);
+typedef void *(*section_constr)(PMEMobjpool *pop, void *data);
 typedef void (*section_destr)(PMEMobjpool *pop, void *rt);
 typedef int (*section_global_op)(PMEMobjpool *pop);
 

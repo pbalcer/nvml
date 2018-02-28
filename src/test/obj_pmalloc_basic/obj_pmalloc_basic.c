@@ -174,12 +174,11 @@ test_oom_resrv(size_t size)
 
 	for (size_t i = 0; i < count; ) {
 		size_t nresv = MIN(count - i, 10);
-		struct redo_log *redo = pmalloc_redo_hold(mock_pop);
-		struct operation_context ctx;
-		operation_init(&ctx, mock_pop, mock_pop->redo, redo);
-		palloc_publish(&mock_pop->heap, &resvs[i], (int)nresv, &ctx);
+		struct operation_context *ctx =
+			pmalloc_operation_hold(mock_pop);
+		palloc_publish(&mock_pop->heap, &resvs[i], (int)nresv, ctx);
 
-		pmalloc_redo_release(mock_pop);
+		pmalloc_operation_release(mock_pop);
 
 		i += nresv;
 	}

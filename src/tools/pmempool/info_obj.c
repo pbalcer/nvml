@@ -63,10 +63,11 @@ typedef void (*pvector_callback_fn)(struct pmem_info *pip, int v, int vnum,
  * lane_need_recovery_redo -- return 1 if redo log needs recovery
  */
 static int
-lane_need_recovery_redo(struct redo_log *redo, size_t nentries)
+lane_need_recovery_redo(PMEMobjpool *pop,
+	struct redo_log *redo, size_t nentries)
 {
 	/* Needs recovery if any of redo log entries has finish flag set */
-	return redo_log_nflags(redo, nentries) > 0;
+	return redo_log_nflags(pop, redo, nentries) > 0;
 }
 
 /*
@@ -82,8 +83,9 @@ lane_need_recovery_list(struct pmem_info *pip,
 	 * The list section needs recovery if redo log needs recovery or
 	 * object's offset or size are nonzero.
 	 */
-	return lane_need_recovery_redo(&section->redo[0], REDO_NUM_ENTRIES) ||
-		section->obj_offset;
+	return lane_need_recovery_redo(pip->obj.pop,
+		(struct redo_log *)&section->redo,
+		REDO_NUM_ENTRIES) || section->obj_offset;
 }
 
 /*
@@ -97,7 +99,9 @@ lane_need_recovery_alloc(struct pmem_info *pip,
 		(struct lane_alloc_layout *)layout;
 
 	/* there is just a redo log */
-	return lane_need_recovery_redo(&section->redo[0], ALLOC_REDO_LOG_SIZE);
+	return lane_need_recovery_redo(pip->obj.pop,
+		(struct redo_log *)&section->redo,
+		ALLOC_REDO_LOG_SIZE);
 }
 
 #define PVECTOR_EMPTY(_pvec) ((_pvec).embedded[0] == 0)
@@ -127,10 +131,7 @@ lane_need_recovery_tx(struct pmem_info *pip,
 	 * if state is not committed and
 	 * any undo log not empty
 	 */
-	return section->state == TX_STATE_NONE &&
-		(!PVECTOR_EMPTY(section->undo_log[UNDO_ALLOC]) ||
-		!PVECTOR_EMPTY(section->undo_log[UNDO_FREE]) ||
-		!PVECTOR_EMPTY(section->undo_log[UNDO_SET]) ||
+	return (!PVECTOR_EMPTY(section->undo_log[UNDO_SET]) ||
 		set_cache);
 }
 
@@ -238,9 +239,9 @@ info_obj_redo(int v, struct redo_log *redo, size_t nentries)
 			"Value: 0x%016jx "
 			"Finish flag: %d\n",
 			i,
-			redo_log_offset(&redo[i]),
-			redo[i].value,
-			redo_log_is_last(&redo[i]));
+			redo_log_offset(&redo->entries[i]),
+			redo->entries[i].value,
+			redo_log_is_last(&redo->entries[i]));
 	}
 }
 
@@ -252,7 +253,8 @@ info_obj_lane_alloc(int v, struct lane_section_layout *layout)
 {
 	struct lane_alloc_layout *section =
 		(struct lane_alloc_layout *)layout;
-	info_obj_redo(v, &section->redo[0], ALLOC_REDO_LOG_SIZE);
+	info_obj_redo(v, (struct redo_log *)&section->redo,
+		ALLOC_REDO_LOG_SIZE);
 }
 
 /*
@@ -265,7 +267,7 @@ info_obj_lane_list(struct pmem_info *pip, int v,
 	struct lane_list_layout *section = (struct lane_list_layout *)layout;
 
 	outv_field(v, "Object offset", "0x%016lx", section->obj_offset);
-	info_obj_redo(v, &section->redo[0], REDO_NUM_ENTRIES);
+	info_obj_redo(v, (struct redo_log *)&section->redo, REDO_NUM_ENTRIES);
 }
 
 static void
@@ -406,13 +408,6 @@ info_obj_lane_tx(struct pmem_info *pip, int v,
 {
 	struct lane_tx_layout *section = (struct lane_tx_layout *)layout;
 
-	outv_field(v, "State", "%s", out_get_tx_state_str(section->state));
-
-	int vobj = v && (pip->args.obj.valloc || pip->args.obj.voobhdr);
-	info_obj_pvector(pip, v, vobj, &section->undo_log[UNDO_ALLOC],
-			"Undo Log - alloc", info_obj_object_hdr);
-	info_obj_pvector(pip, v, vobj, &section->undo_log[UNDO_FREE],
-			"Undo Log - free", info_obj_object_hdr);
 	info_obj_pvector(pip, v, v, &section->undo_log[UNDO_SET],
 			"Undo Log - set", set_entry_cb);
 	info_obj_pvector(pip, v, v, &section->undo_log[UNDO_SET_CACHE],

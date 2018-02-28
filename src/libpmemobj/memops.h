@@ -40,55 +40,48 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#include "vec.h"
 #include "pmemops.h"
 #include "redo.h"
 #include "lane.h"
 
-enum operation_type {
-	OPERATION_SET,
-	OPERATION_AND,
-	OPERATION_OR,
+enum operation_log_type {
+	LOG_PERSISTENT,
+	LOG_TRANSIENT,
 
-	MAX_OPERATION_TYPE
+	MAX_OPERATION_LOG_TYPE
 };
 
-struct operation_entry {
-	uint64_t *ptr;
-	uint64_t value;
-	enum operation_type type;
-};
-
-#define MAX_MEMOPS_ENTRIES REDO_NUM_ENTRIES
-
-enum operation_entry_type {
-	ENTRY_PERSISTENT,
-	ENTRY_TRANSIENT,
-
-	MAX_OPERATION_ENTRY_TYPE
+struct operation_log {
+	size_t capacity;
+	size_t size;
+	struct redo_log *redo;
 };
 
 /*
  * operation_context -- context of an ongoing palloc operation
  */
 struct operation_context {
-	const void *base;
+	void *base;
+	redo_extend_fn extend;
 
 	const struct redo_ctx *redo_ctx;
 	struct redo_log *redo;
 	const struct pmem_ops *p_ops;
 
-	size_t nentries[MAX_OPERATION_ENTRY_TYPE];
-	struct operation_entry
-		entries[MAX_OPERATION_ENTRY_TYPE][MAX_MEMOPS_ENTRIES];
+	struct operation_log logs[MAX_OPERATION_LOG_TYPE];
 };
 
-void operation_init(struct operation_context *ctx, const void *base,
-	const struct redo_ctx *redo_ctx, struct redo_log *redo);
-void operation_add_entry(struct operation_context *ctx,
-	void *ptr, uint64_t value, enum operation_type type);
-void operation_add_typed_entry(struct operation_context *ctx,
+struct operation_context *operation_new(void *base,
+	const struct redo_ctx *redo_ctx, struct redo_log *redo,
+	redo_extend_fn extend);
+void operation_delete(struct operation_context *ctx);
+int operation_reserve_capacity(struct operation_context *ctx, size_t nentries);
+int operation_add_entry(struct operation_context *ctx,
+	void *ptr, uint64_t value, enum redo_operation_type type);
+int operation_add_typed_entry(struct operation_context *ctx,
 	void *ptr, uint64_t value,
-	enum operation_type type, enum operation_entry_type en_type);
+	enum redo_operation_type type, enum operation_log_type log_type);
 void operation_process(struct operation_context *ctx);
 
 #endif

@@ -39,6 +39,7 @@
 
 #include <stdint.h>
 #include "pvector.h"
+#include "redo.h"
 
 #define TX_DEFAULT_RANGE_CACHE_SIZE (1 << 15)
 #define TX_DEFAULT_RANGE_CACHE_THRESHOLD (1 << 12)
@@ -62,16 +63,15 @@ struct tx_range {
 struct tx_range_cache;
 
 enum undo_types {
-	UNDO_ALLOC,
-	UNDO_FREE,
 	UNDO_SET,
 	UNDO_SET_CACHE,
 
 	MAX_UNDO_TYPES
 };
 
+#define TX_REDO_LOG_SIZE 20
+
 struct lane_tx_layout {
-	uint64_t state;
 	struct pvector undo_log[MAX_UNDO_TYPES];
 };
 

@@ -473,7 +473,10 @@ huge_prep_operation_hdr(const struct memory_block *m, enum memblock_state op,
 		hdr->flags,
 		m->size_idx);
 
-	operation_add_entry(ctx, hdr, val, OPERATION_SET);
+	if (ctx == NULL)
+		*(uint64_t *)hdr = val;
+	else
+		operation_add_entry(ctx, hdr, val, REDO_OPERATION_SET);
 
 	VALGRIND_DO_MAKE_MEM_NOACCESS(hdr + 1,
 		(hdr->size_idx - 1) * sizeof(struct chunk_header));
@@ -499,8 +502,12 @@ huge_prep_operation_hdr(const struct memory_block *m, enum memblock_state op,
 	 * be recreated at heap boot regardless - it's just needed for runtime
 	 * operations.
 	 */
-	operation_add_typed_entry(ctx,
-		footer, val, OPERATION_SET, ENTRY_TRANSIENT);
+	if (ctx == NULL) {
+		*(uint64_t *)footer = val;
+	} else {
+		operation_add_typed_entry(ctx,
+			footer, val, REDO_OPERATION_SET, LOG_TRANSIENT);
+	}
 }
 
 /*
@@ -548,10 +555,10 @@ run_prep_operation_hdr(const struct memory_block *m, enum memblock_state op,
 	/* the bit mask is applied immediately by the add entry operations */
 	if (op == MEMBLOCK_ALLOCATED) {
 		operation_add_entry(ctx, &r->bitmap[bpos],
-			bmask, OPERATION_OR);
+			bmask, REDO_OPERATION_OR);
 	} else if (op == MEMBLOCK_FREE) {
 		operation_add_entry(ctx, &r->bitmap[bpos],
-			~bmask, OPERATION_AND);
+			~bmask, REDO_OPERATION_AND);
 	} else {
 		ASSERT(0);
 	}

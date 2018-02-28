@@ -2064,22 +2064,19 @@ obj_alloc_construct(PMEMobjpool *pop, PMEMoid *oidp, size_t size,
 	carg.constructor = constructor;
 	carg.arg = arg;
 
-	struct redo_log *redo = pmalloc_redo_hold(pop);
-
-	struct operation_context ctx;
-	operation_init(&ctx, pop, pop->redo, redo);
+	struct operation_context *ctx = pmalloc_operation_hold(pop);
 
 	if (oidp)
-		operation_add_entry(&ctx, &oidp->pool_uuid_lo, pop->uuid_lo,
-				OPERATION_SET);
+		operation_add_entry(ctx, &oidp->pool_uuid_lo, pop->uuid_lo,
+				REDO_OPERATION_SET);
 
 	int ret = pmalloc_operation(&pop->heap, 0,
 			oidp != NULL ? &oidp->off : NULL, size,
 			constructor_alloc_bytype, &carg, type_num, 0,
 			CLASS_ID_FROM_FLAG(flags),
-			&ctx);
+			ctx);
 
-	pmalloc_redo_release(pop);
+	pmalloc_operation_release(pop);
 
 	return ret;
 }
@@ -2184,17 +2181,14 @@ obj_free(PMEMobjpool *pop, PMEMoid *oidp)
 {
 	ASSERTne(oidp, NULL);
 
-	struct redo_log *redo = pmalloc_redo_hold(pop);
+	struct operation_context *ctx = pmalloc_operation_hold(pop);
 
-	struct operation_context ctx;
-	operation_init(&ctx, pop, pop->redo, redo);
-
-	operation_add_entry(&ctx, &oidp->pool_uuid_lo, 0, OPERATION_SET);
+	operation_add_entry(ctx, &oidp->pool_uuid_lo, 0, REDO_OPERATION_SET);
 
 	pmalloc_operation(&pop->heap, oidp->off, &oidp->off, 0, NULL, NULL,
-			0, 0, 0, &ctx);
+			0, 0, 0, ctx);
 
-	pmalloc_redo_release(pop);
+	pmalloc_operation_release(pop);
 }
 
 /*
@@ -2264,15 +2258,12 @@ obj_realloc_common(PMEMobjpool *pop,
 	carg.arg = NULL;
 	carg.zero_init = zero_init;
 
-	struct redo_log *redo = pmalloc_redo_hold(pop);
-
-	struct operation_context ctx;
-	operation_init(&ctx, pop, pop->redo, redo);
+	struct operation_context *ctx = pmalloc_operation_hold(pop);
 
 	int ret = pmalloc_operation(&pop->heap, oidp->off, &oidp->off,
-			size, constructor_realloc, &carg, type_num, 0, 0, &ctx);
+			size, constructor_realloc, &carg, type_num, 0, 0, ctx);
 
-	pmalloc_redo_release(pop);
+	pmalloc_operation_release(pop);
 
 	return ret;
 }
@@ -2587,19 +2578,16 @@ obj_alloc_root(PMEMobjpool *pop, size_t size,
 	carg.zero_init = 1;
 	carg.arg = arg;
 
-	struct redo_log *redo = pmalloc_redo_hold(pop);
+	struct operation_context *ctx = pmalloc_operation_hold(pop);
 
-	struct operation_context ctx;
-	operation_init(&ctx, pop, pop->redo, redo);
-
-	operation_add_entry(&ctx, &pop->root_size, size, OPERATION_SET);
+	operation_add_entry(ctx, &pop->root_size, size, REDO_OPERATION_SET);
 
 	int ret = pmalloc_operation(&pop->heap, pop->root_offset,
 			&pop->root_offset, size,
 			constructor_zrealloc_root, &carg,
-			POBJ_ROOT_TYPE_NUM, OBJ_INTERNAL_OBJECT_MASK, 0, &ctx);
+			POBJ_ROOT_TYPE_NUM, OBJ_INTERNAL_OBJECT_MASK, 0, ctx);
 
-	pmalloc_redo_release(pop);
+	pmalloc_operation_release(pop);
 
 	return ret;
 }
@@ -2787,19 +2775,25 @@ pmemobj_set_value(PMEMobjpool *pop, struct pobj_action *act,
 }
 
 /*
+ * pmemobj_defer_free -- creates a deferred free action
+ */
+void
+pmemobj_defer_free(PMEMobjpool *pop, PMEMoid oid, struct pobj_action *act)
+{
+	palloc_defer_free(&pop->heap, oid.off, act);
+}
+
+/*
  * pmemobj_publish -- publishes a collection of actions
  */
 void
 pmemobj_publish(PMEMobjpool *pop, struct pobj_action *actv, int actvcnt)
 {
-	struct redo_log *redo = pmalloc_redo_hold(pop);
+	struct operation_context *ctx = pmalloc_operation_hold(pop);
 
-	struct operation_context ctx;
-	operation_init(&ctx, pop, pop->redo, redo);
+	palloc_publish(&pop->heap, actv, actvcnt, ctx);
 
-	palloc_publish(&pop->heap, actv, actvcnt, &ctx);
-
-	pmalloc_redo_release(pop);
+	pmalloc_operation_release(pop);
 }
 
 /*

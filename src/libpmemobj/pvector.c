@@ -143,6 +143,12 @@ pvector_reinit(struct pvector_context *ctx)
 	}
 }
 
+void
+pvector_reset(struct pvector_context *ctx)
+{
+	ctx->nvalues = 0;
+}
+
 /*
  * pvector_size -- returns the number of elements in the vector
  */
