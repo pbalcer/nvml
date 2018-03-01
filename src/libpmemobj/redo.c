@@ -128,7 +128,7 @@ redo_log_nflags(void *base, const struct redo_log *redo, size_t *nentries)
 		e = &r->entries[i++];
 	}
 
-	LOG(15, "redo %p nentries %zu nflags %zu", redo, nentries, ret);
+	LOG(15, "redo %p nentries %p nflags %zu", redo, nentries, ret);
 
 	return ret;
 }
