@@ -100,17 +100,23 @@ redo_log_config_delete(struct redo_ctx *ctx)
  * redo_log_nflags -- (internal) get number of finish flags set
  */
 size_t
-redo_log_nflags(void *base, const struct redo_log *redo, size_t nentries)
+redo_log_nflags(void *base, const struct redo_log *redo, size_t *nentries)
 {
 	size_t ret = 0;
 
 	size_t i = 0;
 	const struct redo_log *r = redo;
 	const struct redo_log_entry *e = &r->entries[0];
+	size_t entries = 0;
+	*nentries = 0;
 
 	while (1) {
-		if (redo_log_is_last(e))
+		entries += 1;
+		if (redo_log_is_last(e)) {
+			if (ret == 0)
+				*nentries = entries;
 			ret++;
+		}
 
 		if (i == r->capacity) {
 			if (r->next == 0)
@@ -156,6 +162,12 @@ redo_log_store(const struct redo_ctx *ctx, struct redo_log *dest,
 {
 	src->capacity = ctx->redo_capacity;
 	src->entries[nentries - 1].offset |= REDO_FINISH_FLAG;
+	util_checksum(src,
+		sizeof(struct redo_log) +
+		sizeof(struct redo_log_entry) * nentries,
+			&src->checksum, 1, 0);
+
+	src->unused = 0;
 
 	struct redo_log *redo = dest;
 	size_t offset = ctx->redo_capacity;
@@ -289,8 +301,13 @@ redo_log_recover(const struct redo_ctx *ctx, struct redo_log *redo,
 	LOG(15, "redo %p nentries %zu", redo, nentries);
 	ASSERTne(ctx, NULL);
 
-	size_t nflags = redo_log_nflags(ctx->base, redo, nentries);
+	size_t nflags = redo_log_nflags(ctx->base, redo, &nentries);
 	ASSERT(nflags < 2);
+	if (nentries == 0 || !util_checksum(redo, sizeof(struct redo_log) +
+			sizeof(struct redo_log_entry) * nentries,
+			&redo->checksum, 0, 0)) {
+		return;
+	}
 
 	if (nflags == 1)
 		redo_log_process(ctx, redo, nentries);
@@ -307,7 +324,7 @@ redo_log_check(const struct redo_ctx *ctx, struct redo_log *redo,
 	ASSERTne(ctx, NULL);
 	return 0;
 
-	size_t nflags = redo_log_nflags(ctx->base, redo, nentries);
+	size_t nflags = redo_log_nflags(ctx->base, redo, &nentries);
 
 	if (nflags > 1) {
 		LOG(15, "redo %p too many finish flags", redo);

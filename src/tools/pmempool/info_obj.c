@@ -67,7 +67,7 @@ lane_need_recovery_redo(PMEMobjpool *pop,
 	struct redo_log *redo, size_t nentries)
 {
 	/* Needs recovery if any of redo log entries has finish flag set */
-	return redo_log_nflags(pop, redo, nentries) > 0;
+	return redo_log_nflags(pop, redo, &nentries) > 0;
 }
 
 /*

@@ -88,7 +88,7 @@ void redo_log_store(const struct redo_ctx *ctx, struct redo_log *dest,
 	struct redo_log *src, size_t nentries);
 int redo_log_is_last(const struct redo_log_entry *entry);
 size_t redo_log_nflags(void *base,
-	const struct redo_log *redo, size_t nentries);
+	const struct redo_log *redo, size_t *nentries);
 uint64_t redo_log_offset(const struct redo_log_entry *entry);
 enum redo_operation_type redo_log_operation(const struct redo_log_entry *entry);
 
