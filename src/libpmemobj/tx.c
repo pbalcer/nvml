@@ -1016,7 +1016,6 @@ pmemobj_tx_begin(PMEMobjpool *pop, jmp_buf env, ...)
 			sizeof(struct tx_range_def));
 		lane->cache_offset = 0;
 		lane->lane_idx = idx;
-		VEC_INIT(&lane->actions);
 
 		struct lane_tx_layout *layout =
 			(struct lane_tx_layout *)tx->section->layout;
@@ -1240,6 +1239,7 @@ pmemobj_tx_commit(void)
 
 		pvector_reset(lane->undo.ctx[0]);
 		pvector_reset(lane->undo.ctx[1]);
+		VEC_CLEAR(&lane->actions);
 
 		lane_release(pop);
 
