@@ -225,9 +225,11 @@ tx_action_add(struct tx *tx)
 {
 	struct lane_tx_runtime *lane =
 		(struct lane_tx_runtime *)tx->section->runtime;
-	VEC_INC_BACK(&lane->actions);
-	if (operation_reserve(lane->ctx, VEC_SIZE(&lane->actions)) != 0)
+
+	if (operation_reserve(lane->ctx, VEC_SIZE(&lane->actions) + 1) != 0)
 		return NULL;
+
+	VEC_INC_BACK(&lane->actions);
 
 	return &VEC_BACK(&lane->actions);
 }
