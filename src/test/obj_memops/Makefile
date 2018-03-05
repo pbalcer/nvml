@@ -1,6 +1,5 @@
-#!/usr/bin/env bash
 #
-# Copyright 2015-2018, Intel Corporation
+# Copyright 2018, Intel Corporation
 #
 # Redistribution and use in source and binary forms, with or without
 # modification, are permitted provided that the following conditions
@@ -32,68 +31,12 @@
 #
 
 #
-# src/test/obj_redo_log/TEST3 -- unit test for redo_log_process function
+# src/test/obj_memops/Makefile -- build obj_memops test
 #
+TARGET = obj_memops
+OBJS = obj_memops.o
 
-# standard unit test setup
-. ../unittest/unittest.sh
+LIBPMEM=y
+LIBPMEMOBJ=internal-debug
 
-require_test_type medium
-
-require_build_type debug
-
-setup
-
-FILE=${DIR}/pool
-FSIZE=$((1024*1024))
-RSIZE=4
-
-truncate -s $FSIZE $FILE
-
-expect_normal_exit ./obj_redo_log$EXESUFFIX $FILE $RSIZE\
-	C\
-	f:0:0x00003008:0x01010101\
-	r:0x00003008\
-	P\
-	r:0x00003008\
-	e:0\
-	s:0:0x00003010:0x11111111\
-	s:1:0x00003018:0x22222222\
-	s:2:0x00003020:0x33333333\
-	f:3:0x00003028:0x44444444\
-	r:0x00003010\
-	r:0x00003018\
-	r:0x00003020\
-	r:0x00003028\
-	P\
-	r:0x00003010\
-	r:0x00003018\
-	r:0x00003020\
-	r:0x00003028\
-	e:0\
-	e:1\
-	e:2\
-	e:3\
-	C\
-	s:0:0x00003100:0xaaaaaaaa\
-	s:1:0x00003108:0xbbbbbbbb\
-	s:2:0x00003110:0xcccccccc\
-	f:3:0x00003118:0xdddddddd\
-	r:0x00003100\
-	r:0x00003108\
-	r:0x00003110\
-	r:0x00003118\
-	P\
-	r:0x00003100\
-	r:0x00003108\
-	r:0x00003110\
-	r:0x00003118\
-	e:0\
-	e:1\
-	e:2\
-	e:3\
-	C
-
-check
-
-pass
+include ../Makefile.inc

@@ -307,7 +307,7 @@ test_mock_pool_allocs(void)
 	mock_pop->set->directory_based = 0;
 
 	mock_pop->redo = redo_log_config_new(addr, &mock_pop->p_ops,
-			redo_log_check_offset, mock_pop, REDO_NUM_ENTRIES);
+			redo_log_check_offset, mock_pop);
 
 	void *heap_start = (char *)mock_pop + mock_pop->heap_offset;
 	uint64_t heap_size = MOCK_POOL_SIZE - mock_pop->heap_offset;

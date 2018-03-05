@@ -49,7 +49,8 @@
  * case is to use two, one for modification of the object destination memory
  * location and the second for applying the chunk metadata modifications.
  */
-#define ALLOC_REDO_LOG_SIZE 62
+#define ALLOC_REDO_LOG_SIZE 60
+
 struct lane_alloc_layout {
 	struct REDO_LOG(ALLOC_REDO_LOG_SIZE) redo;
 };

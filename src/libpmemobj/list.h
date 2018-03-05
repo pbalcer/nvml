@@ -46,6 +46,9 @@
 #include "pmalloc.h"
 #include "redo.h"
 
+
+#define LIST_REDO_LOG_SIZE 58
+
 /*
  * lane_list_layout -- structure of list section in lane
  *
@@ -53,8 +56,8 @@
  * redo       - redo log
  */
 struct lane_list_layout {
+	struct REDO_LOG(LIST_REDO_LOG_SIZE) redo;
 	uint64_t obj_offset;
-	struct REDO_LOG(REDO_NUM_ENTRIES) redo;
 };
 
 struct list_entry {

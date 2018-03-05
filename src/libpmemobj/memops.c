@@ -52,12 +52,15 @@
 
 struct operation_context *
 operation_new(void *base, const struct redo_ctx *redo_ctx,
-	struct redo_log *redo, redo_extend_fn extend)
+	struct redo_log *redo, size_t redo_base_capacity, redo_extend_fn extend)
 {
 	struct operation_context *ctx = Malloc(sizeof(*ctx));
 	ctx->base = base;
 	ctx->redo_ctx = redo_ctx;
 	ctx->redo = redo;
+	ctx->redo_base_capacity = redo_base_capacity;
+	ctx->redo_capacity = redo_log_capacity(redo_ctx, redo,
+		redo_base_capacity);
 	ctx->extend = extend;
 	if (redo_ctx)
 		ctx->p_ops = redo_get_pmem_ops(redo_ctx);
@@ -67,8 +70,13 @@ operation_new(void *base, const struct redo_ctx *redo_ctx,
 	for (int i = 0; i < MAX_OPERATION_LOG_TYPE; ++i) {
 		ctx->logs[i].capacity = REDO_LOG_BASE_ENTRIES;
 		ctx->logs[i].size = 0;
-		ctx->logs[i].redo = Malloc(sizeof(struct redo_log) +
+		struct redo_log *redo = Malloc(sizeof(struct redo_log) +
 		(sizeof(struct redo_log_entry) * REDO_LOG_BASE_ENTRIES));
+
+		redo->capacity = redo_base_capacity;
+		memset(redo->unused, 0, sizeof(redo->unused));
+
+		ctx->logs[i].redo = redo;
 	}
 
 	return ctx;
@@ -80,6 +88,7 @@ operation_delete(struct operation_context *ctx)
 	for (int i = 0; i < MAX_OPERATION_LOG_TYPE; ++i) {
 		Free(ctx->logs[i].redo);
 	}
+	Free(ctx);
 }
 
 /*
@@ -166,13 +175,6 @@ operation_add_entry(struct operation_context *ctx, void *ptr, uint64_t value,
 		from_pool ? LOG_PERSISTENT : LOG_TRANSIENT);
 }
 
-int
-operation_reserve_capacity(struct operation_context *ctx, size_t nentries)
-{
-	return redo_log_reserve(ctx->redo_ctx, ctx->redo,
-		nentries, ctx->extend);
-}
-
 /*
  * operation_process_persistent_redo -- (internal) process using redo
  */
@@ -182,16 +184,50 @@ operation_process_persistent_redo(struct operation_context *ctx)
 	const struct redo_ctx *redo = ctx->redo_ctx;
 
 	struct operation_log *oplog = &ctx->logs[LOG_PERSISTENT];
-	redo_log_store(ctx->redo_ctx, ctx->redo,
-		oplog->redo, oplog->size);
 
-	redo_log_process(redo, ctx->redo, oplog->size);
+	redo_log_store(ctx->redo_ctx, ctx->redo,
+		oplog->redo, oplog->size, ctx->redo_base_capacity);
+
+	redo_log_process(redo, ctx->redo);
 }
 
 static void
 operation_transient_clean(void *base, const void *addr, size_t len)
 {
 	VALGRIND_SET_CLEAN(addr, len);
+}
+
+int
+operation_reserve(struct operation_context *ctx, size_t new_capacity)
+{
+	if (new_capacity > ctx->redo_capacity) {
+		if (ctx->extend == NULL)
+			return -1;
+
+		if (redo_log_reserve(ctx->redo_ctx, ctx->redo,
+		    ctx->redo_base_capacity, &new_capacity, ctx->extend) != 0)
+			return -1;
+		ctx->redo_capacity = new_capacity;
+	}
+	
+	return 0;
+}
+
+void
+operation_init(struct operation_context *ctx)
+{
+	struct operation_log *plog = &ctx->logs[LOG_PERSISTENT];
+	struct operation_log *tlog = &ctx->logs[LOG_TRANSIENT];
+	VALGRIND_ANNOTATE_NEW_MEMORY(tlog, sizeof(*tlog));
+	VALGRIND_ANNOTATE_NEW_MEMORY(tlog, sizeof(*tlog));
+
+	VALGRIND_ANNOTATE_NEW_MEMORY(ctx, sizeof(*ctx));
+	VALGRIND_ANNOTATE_NEW_MEMORY(tlog->redo, sizeof(struct redo_log) +
+		(sizeof(struct redo_log_entry) * tlog->capacity));
+	VALGRIND_ANNOTATE_NEW_MEMORY(plog->redo, sizeof(struct redo_log) +
+		(sizeof(struct redo_log_entry) * plog->capacity));
+	tlog->size = 0;
+	plog->size = 0;
 }
 
 /*
@@ -217,8 +253,7 @@ operation_process(struct operation_context *ctx)
 	 */
 	if (plog->size == 1) {
 		e = &plog->redo->entries[0];
-		redo_log_entry_apply(ctx->base, e,
-			ctx->p_ops->persist);
+		redo_log_entry_apply(ctx->base, e, ctx->p_ops->persist);
 	} else if (plog->size != 0) {
 		operation_process_persistent_redo(ctx);
 	}
@@ -228,6 +263,4 @@ operation_process(struct operation_context *ctx)
 		redo_log_entry_apply(ctx->base, e, operation_transient_clean);
 	}
 
-	tlog->size = 0;
-	plog->size = 0;
 }

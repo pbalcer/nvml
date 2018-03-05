@@ -505,6 +505,7 @@ list_insert_new(PMEMobjpool *pop,
 		(struct lane_list_layout *)lane_section->layout;
 
 	struct operation_context *ctx = lane_section->runtime;
+	operation_init(ctx);
 
 	if (constructor) {
 		if ((ret = pmalloc_construct(pop,
@@ -655,6 +656,7 @@ list_insert(PMEMobjpool *pop,
 	ASSERTne(lane_section->layout, NULL);
 
 	struct operation_context *ctx = lane_section->runtime;
+	operation_init(ctx);
 
 	dest = list_get_dest(pop, head, dest, pe_offset, before);
 
@@ -731,6 +733,7 @@ list_remove_free(PMEMobjpool *pop, size_t pe_offset,
 	struct lane_list_layout *section =
 		(struct lane_list_layout *)lane_section->layout;
 	struct operation_context *ctx = lane_section->runtime;
+	operation_init(ctx);
 
 	uint64_t obj_doffset = oidp->off;
 
@@ -831,6 +834,7 @@ list_remove(PMEMobjpool *pop,
 	}
 
 	struct operation_context *ctx = lane_section->runtime;
+	operation_init(ctx);
 
 	struct list_entry *entry_ptr =
 		(struct list_entry *)OBJ_OFF_TO_PTR(pop,
@@ -910,6 +914,7 @@ list_move(PMEMobjpool *pop,
 	}
 
 	struct operation_context *ctx = lane_section->runtime;
+	operation_init(ctx);
 
 	dest = list_get_dest(pop, head_new, dest,
 		(ssize_t)pe_offset_new, before);
@@ -1015,8 +1020,7 @@ lane_list_recovery(PMEMobjpool *pop, void *data, unsigned length)
 	struct lane_list_layout *section = data;
 	ASSERT(sizeof(*section) <= length);
 
-	redo_log_recover(pop->redo, (struct redo_log *)&section->redo,
-		REDO_NUM_ENTRIES);
+	redo_log_recover(pop->redo, (struct redo_log *)&section->redo);
 
 	if (section->obj_offset) {
 		/* alloc or free recovery */
@@ -1037,8 +1041,8 @@ lane_list_check(PMEMobjpool *pop, void *data, unsigned length)
 	struct lane_list_layout *section = data;
 
 	int ret = 0;
-	if ((ret = redo_log_check(pop->redo, (struct redo_log *)&section->redo,
-			REDO_NUM_ENTRIES)) != 0) {
+	if ((ret = redo_log_check(pop->redo,
+			(struct redo_log *)&section->redo)) != 0) {
 		ERR("list lane: redo log check failed");
 		ASSERT(ret == 0 || ret == -1);
 		return ret;
@@ -1063,7 +1067,8 @@ lane_list_construct_rt(PMEMobjpool *pop, void *data)
 {
 	struct lane_list_layout *layout = data;
 	return operation_new(pop, pop->redo,
-		(struct redo_log *)&layout->redo, NULL);
+		(struct redo_log *)&layout->redo, LIST_REDO_LOG_SIZE,
+		NULL);
 }
 
 /*

@@ -1067,7 +1067,7 @@ obj_replica_init(PMEMobjpool *rep, struct pool_set *set, unsigned repidx,
 		return ret;
 
 	rep->redo = redo_log_config_new(rep->addr, &rep->p_ops,
-			redo_log_check_offset, rep, REDO_NUM_ENTRIES);
+			redo_log_check_offset, rep);
 	if (!rep->redo)
 		return -1;
 

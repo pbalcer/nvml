@@ -92,6 +92,8 @@ struct lane_tx_runtime {
 	struct ravl *ranges;
 	uint64_t cache_offset;
 	struct tx_undo_runtime undo;
+
+	struct operation_context *ctx;
 	VEC(, struct pobj_action) actions;
 };
 
@@ -217,6 +219,18 @@ obj_tx_abort_null(int errnum)
 	if (tx->stage != TX_STAGE_WORK)\
 		FATAL("%s called in invalid stage %d", __func__, tx->stage);\
 } while (0)
+
+static struct pobj_action *
+tx_action_add(struct tx *tx)
+{
+	struct lane_tx_runtime *lane =
+		(struct lane_tx_runtime *)tx->section->runtime;
+	VEC_INC_BACK(&lane->actions);
+	if (operation_reserve(lane->ctx, VEC_SIZE(&lane->actions)) != 0)
+		return NULL;
+
+	return &VEC_BACK(&lane->actions);
+}
 
 /*
  * constructor_tx_alloc -- (internal) constructor for normal alloc
@@ -898,17 +912,17 @@ tx_alloc_common(struct tx *tx, size_t size, type_num_t type_num,
 
 	PMEMobjpool *pop = tx->pop;
 
-	struct pobj_action action;
-
-	if (palloc_reserve(&pop->heap, size, constructor, &args, type_num, 0,
-		CLASS_ID_FROM_FLAG(args.flags), &action) != 0)
+	struct pobj_action *action = tx_action_add(tx);
+	if (action == NULL)
 		goto err_oom;
 
-	VEC_PUSH_BACK(&lane->actions, action);
+	if (palloc_reserve(&pop->heap, size, constructor, &args, type_num, 0,
+		CLASS_ID_FROM_FLAG(args.flags), action) != 0)
+		goto err_oom;
 
 	/* allocate object to undo log */
 	PMEMoid retoid = OID_NULL;
-	retoid.off = action.heap.offset;
+	retoid.off = action->heap.offset;
 	retoid.pool_uuid_lo = pop->uuid_lo;
 	size = palloc_usable_size(&pop->heap, retoid.off);
 
@@ -1008,6 +1022,8 @@ pmemobj_tx_begin(PMEMobjpool *pop, jmp_buf env, ...)
 
 		lane = tx->section->runtime;
 		VALGRIND_ANNOTATE_NEW_MEMORY(lane, sizeof(*lane));
+		operation_init(lane->ctx);
+		VEC_REINIT(&lane->actions);
 
 		SLIST_INIT(&tx->tx_entries);
 		SLIST_INIT(&tx->tx_locks);
@@ -1230,12 +1246,9 @@ pmemobj_tx_commit(void)
 
 		pmemops_drain(&pop->p_ops);
 
-		/* set transaction state as committed */
-		struct operation_context *ctx = pmalloc_operation_hold(pop);
-		operation_reserve_capacity(ctx, VEC_SIZE(&lane->actions));
+		struct operation_context *ctx = lane->ctx;
 		palloc_publish(&pop->heap, VEC_ARR(&lane->actions),
 			(int)VEC_SIZE(&lane->actions), ctx);
-		pmalloc_operation_release(pop);
 
 		pvector_reset(lane->undo.ctx[0]);
 		pvector_reset(lane->undo.ctx[1]);
@@ -1365,11 +1378,14 @@ pmemobj_tx_add_large(struct tx *tx, struct tx_range_def *args)
 		pvector_pop_back(undo, NULL);
 	}
 
-	struct pobj_action action[2];
-	palloc_defer_free(&pop->heap, *entry, &action[0]);
-	palloc_set_value(&pop->heap, &action[1], entry, 0);
-	VEC_PUSH_BACK(&runtime->actions, action[0]);
-	VEC_PUSH_BACK(&runtime->actions, action[1]);
+	struct pobj_action *action[2] = {tx_action_add(tx), tx_action_add(tx)};
+	if (action[0] == NULL || action[1] == NULL) {
+		ERR("cannot extend transaction log");
+		return -1;
+	}
+
+	palloc_defer_free(&pop->heap, *entry, action[0]);
+	palloc_set_value(&pop->heap, action[1], entry, 0);
 
 	return ret;
 }
@@ -1415,37 +1431,42 @@ pmemobj_tx_get_range_cache(PMEMobjpool *pop, struct tx *tx,
 	struct lane_tx_runtime *runtime = tx->section->runtime;
 
 	/* verify if the cache exists and has at least 8 bytes of free space */
-	if (cache == NULL || runtime->cache_offset +
-		sizeof(struct tx_range) >= cache_size) {
-		/* no existing cache, allocate a new one */
-		uint64_t *entry = pvector_push_back(undo);
-		if (entry == NULL) {
-			ERR("cache set undo log too large");
-			return NULL;
-		}
-		int err = pmalloc_construct(pop, entry,
-			pop->tx_params->cache_size,
-			constructor_tx_range_cache, NULL,
-			0, OBJ_INTERNAL_OBJECT_MASK, 0);
+	if (cache != NULL && cache_size > runtime->cache_offset +
+	    sizeof(struct tx_range))
+		goto out;
 
-		if (err != 0) {
-			pvector_pop_back(undo, NULL);
-			return NULL;
-		}
+	/* no existing cache, allocate a new one */
+	uint64_t *entry = pvector_push_back(undo);
+	if (entry == NULL) {
+		ERR("cache set undo log too large");
+		return NULL;
+	}
+	int err = pmalloc_construct(pop, entry,
+		pop->tx_params->cache_size,
+		constructor_tx_range_cache, NULL,
+		0, OBJ_INTERNAL_OBJECT_MASK, 0);
 
-		struct pobj_action action[2];
-		palloc_defer_free(&pop->heap, *entry, &action[0]);
-		palloc_set_value(&pop->heap, &action[1], entry, 0);
-		VEC_PUSH_BACK(&runtime->actions, action[0]);
-		VEC_PUSH_BACK(&runtime->actions, action[1]);
-
-		cache = OBJ_OFF_TO_PTR(pop, *entry);
-		cache_size = palloc_usable_size(&pop->heap, *entry);
-
-		/* since the cache is new, we start the count from 0 */
-		runtime->cache_offset = 0;
+	if (err != 0) {
+		pvector_pop_back(undo, NULL);
+		return NULL;
 	}
 
+	struct pobj_action *action[2] = {tx_action_add(tx), tx_action_add(tx)};
+	if (action[0] == NULL || action[1] == NULL) {
+		ERR("cannot extend transaction log");
+		return NULL;
+	}
+
+	palloc_defer_free(&pop->heap, *entry, action[0]);
+	palloc_set_value(&pop->heap, action[1], entry, 0);
+
+	cache = OBJ_OFF_TO_PTR(pop, *entry);
+	cache_size = palloc_usable_size(&pop->heap, *entry);
+
+	/* since the cache is new, we start the count from 0 */
+	runtime->cache_offset = 0;
+
+out:
 	*remaining_space = cache_size - runtime->cache_offset;
 
 	return cache;
@@ -1959,8 +1980,7 @@ pmemobj_tx_free(PMEMoid oid)
 	if (OBJ_OID_IS_NULL(oid))
 		return 0;
 
-	struct lane_tx_runtime *lane =
-		(struct lane_tx_runtime *)tx->section->runtime;
+
 	PMEMobjpool *pop = tx->pop;
 
 	if (pop->uuid_lo != oid.pool_uuid_lo) {
@@ -1969,9 +1989,12 @@ pmemobj_tx_free(PMEMoid oid)
 	}
 	ASSERT(OBJ_OID_IS_VALID(pop, oid));
 
-	struct pobj_action action;
-	palloc_defer_free(&pop->heap, oid.off, &action);
-	VEC_PUSH_BACK(&lane->actions, action);
+	struct pobj_action *action = tx_action_add(tx);
+	if (action == NULL) {
+		ERR("cannot extend transaction log");
+		return obj_tx_abort_err(ENOMEM);
+	}
+	palloc_defer_free(&pop->heap, oid.off, action);
 
 	return 0;
 }
@@ -1988,11 +2011,45 @@ pmemobj_tx_publish(struct pobj_action *actv, int actvcnt)
 	struct lane_tx_runtime *lane =
 		(struct lane_tx_runtime *)tx->section->runtime;
 
+	size_t new_capacity = VEC_SIZE(&lane->actions) + (size_t)actvcnt;
+
+	if (operation_reserve(lane->ctx, new_capacity) != 0)
+		return -1;
+
 	for (int i = 0; i < actvcnt; ++i) {
 		VEC_PUSH_BACK(&lane->actions, actv[i]);
 	}
 
 	return 0;
+}
+
+#define TX_REDO_LOG_EXTEND_SIZE 251
+
+static int
+tx_redo_log_constructor(void *ctx, void *ptr, size_t usable_size, void *arg)
+{
+	PMEMobjpool *pop = ctx;
+	const struct pmem_ops *p_ops = &pop->p_ops;
+
+	struct redo_log *redo = ptr;
+	redo->capacity = TX_REDO_LOG_EXTEND_SIZE;
+	redo->checksum = 0;
+	redo->next = 0;
+	memset(redo->unused, 0, sizeof(redo->unused));
+
+	pmemops_flush(p_ops, redo, sizeof(*redo));
+
+	return 0;
+}
+
+static int
+tx_redo_extend(void *ctx, uint64_t *redo)
+{
+	size_t s = sizeof(struct redo_log) +
+		TX_REDO_LOG_EXTEND_SIZE * sizeof(struct redo_log_entry);
+
+	return pmalloc_construct(ctx, redo, s, tx_redo_log_constructor, NULL, 0,
+		OBJ_INTERNAL_OBJECT_MASK, 0);
 }
 
 /*
@@ -2007,7 +2064,13 @@ lane_transaction_construct_rt(PMEMobjpool *pop, void *data)
 	 * to keep in mind that any volatile state that could have been
 	 * initialized here might be invalid once the recovery finishes.
 	 */
-	return Zalloc(sizeof(struct lane_tx_runtime));
+	struct lane_tx_layout *layout = data;
+	struct lane_tx_runtime *lane = Zalloc(sizeof(struct lane_tx_runtime));
+	lane->ctx = operation_new(pop, pop->redo,
+		(struct redo_log *)&layout->redo, TX_REDO_LOG_SIZE,
+		tx_redo_extend);
+
+	return lane;
 }
 
 /*
@@ -2018,6 +2081,8 @@ lane_transaction_destroy_rt(PMEMobjpool *pop, void *rt)
 {
 	struct lane_tx_runtime *lane = rt;
 	tx_destroy_undo_runtime(&lane->undo);
+	VEC_DELETE(&lane->actions);
+	operation_delete(lane->ctx);
 	Free(lane);
 }
 
@@ -2030,6 +2095,8 @@ lane_transaction_recovery(PMEMobjpool *pop, void *data, unsigned length)
 	struct lane_tx_layout *layout = data;
 	int ret = 0;
 	ASSERT(sizeof(*layout) <= length);
+
+	redo_log_recover(pop->redo, (struct redo_log *)&layout->redo);
 
 	/* process undo log and restore all operations */
 	tx_abort(pop, NULL, layout, 1 /* recovery */);

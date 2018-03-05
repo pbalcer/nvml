@@ -1240,7 +1240,7 @@ static int
 pmemspoil_process_sec_list(struct pmemspoil *psp,
 	struct pmemspoil_list *pfp, struct lane_list_layout *sec)
 {
-	size_t redo_size = REDO_NUM_ENTRIES;
+	size_t redo_size = LIST_REDO_LOG_SIZE;
 	PROCESS_BEGIN(psp, pfp) {
 		PROCESS_FIELD(sec, obj_offset, uint64_t);
 		PROCESS(redo_log, &sec->redo.entries[PROCESS_INDEX], redo_size,

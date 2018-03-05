@@ -72,8 +72,10 @@ pmalloc_operation_hold(PMEMobjpool *pop)
 	struct lane_alloc_runtime *rt = lane->runtime;
 
 #ifndef DEBUG
+	ASSERTeq(rt->inprogress, 0);
 	rt->inprogress = 1;
 #endif
+	operation_init(rt->ctx);
 
 	return rt->ctx;
 }
@@ -204,35 +206,6 @@ pfree(PMEMobjpool *pop, uint64_t *off)
 	pmalloc_operation_release(pop);
 }
 
-#define NENTRIES 1024
-
-static int
-redo_log_constructor(void *ctx, void *ptr, size_t usable_size, void *arg)
-{
-	PMEMobjpool *pop = ctx;
-	const struct pmem_ops *p_ops = &pop->p_ops;
-
-	struct redo_log *redo = ptr;
-	redo->capacity = NENTRIES;
-	redo->checksum = 0;
-	redo->next = 0;
-	redo->unused = 0;
-
-	pmemops_flush(p_ops, redo, sizeof(*redo));
-
-	return 0;
-}
-
-static int
-pmalloc_redo_extend(void *ctx, uint64_t *redo)
-{
-	size_t s = sizeof(struct redo_log) +
-		NENTRIES * sizeof(struct redo_log_entry);
-
-	return pmalloc_construct(ctx, redo, s, redo_log_constructor, NULL, 0,
-		OBJ_INTERNAL_OBJECT_MASK, 0);
-}
-
 /*
  * pmalloc_construct_rt -- construct runtime part of allocator section
  */
@@ -246,7 +219,8 @@ pmalloc_construct_rt(PMEMobjpool *pop, void *data)
 
 	alloc_rt->inprogress = 0;
 	alloc_rt->ctx = operation_new(pop, pop->redo,
-		(struct redo_log *)&layout->redo, pmalloc_redo_extend);
+		(struct redo_log *)&layout->redo, ALLOC_REDO_LOG_SIZE,
+		NULL);
 	if (alloc_rt->ctx == NULL) {
 		Free(alloc_rt);
 		return NULL;
@@ -275,8 +249,7 @@ pmalloc_recovery(PMEMobjpool *pop, void *data, unsigned length)
 	struct lane_alloc_layout *sec = data;
 	ASSERT(sizeof(*sec) <= length);
 
-	redo_log_recover(pop->redo, (struct redo_log *)&sec->redo,
-		ALLOC_REDO_LOG_SIZE);
+	redo_log_recover(pop->redo, (struct redo_log *)&sec->redo);
 
 	return 0;
 }
@@ -291,8 +264,7 @@ pmalloc_check(PMEMobjpool *pop, void *data, unsigned length)
 
 	struct lane_alloc_layout *sec = data;
 
-	int ret = redo_log_check(pop->redo, (struct redo_log *)&sec->redo,
-		ALLOC_REDO_LOG_SIZE);
+	int ret = redo_log_check(pop->redo, (struct redo_log *)&sec->redo);
 	if (ret != 0)
 		ERR("allocator lane: redo log check failed");
 

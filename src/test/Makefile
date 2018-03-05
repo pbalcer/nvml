@@ -107,6 +107,7 @@ OBJ_TESTS = \
 	obj_locks\
 	obj_memblock\
 	obj_memcheck\
+	obj_memops\
 	obj_oid\
 	obj_out_of_memory\
 	obj_persist_count\
@@ -121,7 +122,6 @@ OBJ_TESTS = \
 	obj_ravl\
 	obj_recovery\
 	obj_recreate\
-	obj_redo_log\
 	obj_ringbuf\
 	obj_strdup\
 	obj_sds\

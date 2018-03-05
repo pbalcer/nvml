@@ -56,16 +56,19 @@ struct redo_log_entry {
 	uint64_t checksum;\
 	uint64_t next;\
 	uint64_t capacity;\
-	uint64_t unused;\
+	uint64_t unused[5];\
 	struct redo_log_entry entries[nentries];\
 }\
+
+#define SIZEOF_REDO_LOG(nentries)\
+(sizeof(struct redo_log) + sizeof(struct redo_log_entry) * (nentries))
 
 struct redo_log REDO_LOG();
 
 enum redo_operation_type {
-	REDO_OPERATION_SET,
-	REDO_OPERATION_AND,
-	REDO_OPERATION_OR,
+	REDO_OPERATION_SET	=	0b00,
+	REDO_OPERATION_AND	=	0b01,
+	REDO_OPERATION_OR	=	0b10,
 
 	MAX_OPERATION_TYPE
 };
@@ -76,19 +79,28 @@ typedef int (*redo_extend_fn)(void *, uint64_t *);
 struct redo_ctx *redo_log_config_new(void *base,
 		const struct pmem_ops *p_ops,
 		redo_check_offset_fn check_offset,
-		void *check_offset_ctx,
-		unsigned redo_capacity);
+		void *check_offset_ctx);
 
 void redo_log_config_delete(struct redo_ctx *ctx);
 
+size_t redo_log_capacity(const struct redo_ctx *ctx,
+	struct redo_log *redo, size_t redo_capacity);
+
 int redo_log_reserve(const struct redo_ctx *ctx, struct redo_log *redo,
-	size_t nentries, redo_extend_fn extend);
+	size_t redo_capacity, size_t *new_capacity, redo_extend_fn extend);
 void redo_log_init(const struct redo_ctx *ctx, struct redo_log *redo);
 void redo_log_store(const struct redo_ctx *ctx, struct redo_log *dest,
-	struct redo_log *src, size_t nentries);
+	struct redo_log *src, size_t nentries, size_t redo_capacity);
 int redo_log_is_last(const struct redo_log_entry *entry);
-size_t redo_log_nflags(void *base,
-	const struct redo_log *redo, size_t *nentries);
+
+struct redo_log_info {
+	size_t nentries;
+	size_t nflags;
+};
+
+struct redo_log_info redo_log_info(const struct redo_ctx *ctx,
+	struct redo_log *redo);
+
 uint64_t redo_log_offset(const struct redo_log_entry *entry);
 enum redo_operation_type redo_log_operation(const struct redo_log_entry *entry);
 
@@ -106,12 +118,9 @@ enum redo_apply_persistence {
 void redo_log_entry_apply(void *base, const struct redo_log_entry *e,
 	flush_fn flush);
 
-void redo_log_process(const struct redo_ctx *ctx, struct redo_log *redo,
-		size_t nentries);
-void redo_log_recover(const struct redo_ctx *ctx, struct redo_log *redo,
-		size_t nentries);
-int redo_log_check(const struct redo_ctx *ctx, struct redo_log *redo,
-		size_t nentries);
+void redo_log_process(const struct redo_ctx *ctx, struct redo_log *redo);
+void redo_log_recover(const struct redo_ctx *ctx, struct redo_log *redo);
+int redo_log_check(const struct redo_ctx *ctx, struct redo_log *redo);
 
 const struct pmem_ops *redo_get_pmem_ops(const struct redo_ctx *ctx);
 

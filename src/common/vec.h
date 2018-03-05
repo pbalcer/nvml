@@ -37,6 +37,8 @@
 #ifndef PMDK_VEC_H
 #define PMDK_VEC_H 1
 
+#include "valgrind_internal.h"
+
 #define VEC_GROW_SIZE (64)
 
 #define VEC(name, type)\
@@ -52,6 +54,13 @@ struct name {\
 	(vec)->buffer = NULL;\
 	(vec)->size = 0;\
 	(vec)->capacity = 0;\
+} while (0)
+
+#define VEC_REINIT(vec) do {\
+	VALGRIND_ANNOTATE_NEW_MEMORY((vec), sizeof(*vec));\
+	VALGRIND_ANNOTATE_NEW_MEMORY((vec)->buffer,\
+		(sizeof(*(vec)->buffer) * ((vec)->capacity)));\
+	(vec)->size = 0;\
 } while (0)
 
 #define VEC_RESERVE(vec, ncapacity) do {\
@@ -86,17 +95,15 @@ struct name {\
 	VEC_ERASE_BY_POS(vec, elpos);\
 } while (0)
 
-#define VEC_PUSH_BACK(vec, element) do {\
+#define VEC_INC_BACK(vec) do {\
 	if ((vec)->capacity == (vec)->size)\
 		VEC_RESERVE((vec), ((vec)->capacity + VEC_GROW_SIZE));\
-	(vec)->buffer[(vec)->size++] = (element);\
+	(vec)->size++;\
 } while (0)
 
-/* doesn't work on MSVC */
-#define VEC_EMPLACE_BACK(vec, ...) do {\
-	if ((vec)->capacity == (vec)->size)\
-		VEC_RESERVE((vec), (vec)->capacity + VEC_GROW_SIZE);\
-	(vec)->buffer[(vec)->size++] = (typeof(*(vec)->buffer)) {__VA_ARGS__};\
+#define VEC_PUSH_BACK(vec, element) do {\
+	VEC_INC_BACK(vec);\
+	(vec)->buffer[(vec)->size - 1] = (element);\
 } while (0)
 
 #define VEC_FOREACH(el, vec)\

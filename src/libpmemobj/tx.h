@@ -69,9 +69,10 @@ enum undo_types {
 	MAX_UNDO_TYPES
 };
 
-#define TX_REDO_LOG_SIZE 20
+#define TX_REDO_LOG_SIZE 32
 
 struct lane_tx_layout {
+	struct REDO_LOG(TX_REDO_LOG_SIZE) redo;
 	struct pvector undo_log[MAX_UNDO_TYPES];
 };
 
