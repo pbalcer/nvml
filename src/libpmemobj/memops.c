@@ -92,18 +92,18 @@ operation_delete(struct operation_context *ctx)
 }
 
 /*
- * operation_perform -- (internal) performs a operation on the field
+ * operation_apply -- (internal) performs a operation on the field
  */
 static inline void
-operation_perform(uint64_t *field, uint64_t value,
+operation_apply(struct redo_log_entry *oentry, struct redo_log_entry *nentry,
 	enum redo_operation_type op_type)
 {
 	switch (op_type) {
 		case REDO_OPERATION_AND:
-			*field &= value;
+			oentry->value &= nentry->value;
 		break;
 		case REDO_OPERATION_OR:
-			*field |= value;
+			oentry->value |= nentry->value;
 		break;
 		case REDO_OPERATION_SET: /* do nothing, duplicate entry */
 		break;
@@ -136,7 +136,7 @@ operation_add_typed_entry(struct operation_context *ctx,
 		e = &oplog->redo->entries[i];
 		if (redo_log_offset(e) == redo_log_offset(&entry) &&
 			redo_log_operation(e) == redo_log_operation(&entry)) {
-			operation_perform(ptr, value, type);
+			operation_apply(e, &entry, type);
 			return 0;
 		}
 	}

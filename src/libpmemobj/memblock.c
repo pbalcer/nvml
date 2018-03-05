@@ -473,10 +473,12 @@ huge_prep_operation_hdr(const struct memory_block *m, enum memblock_state op,
 		hdr->flags,
 		m->size_idx);
 
-	if (ctx == NULL)
+	if (ctx == NULL) {
 		*(uint64_t *)hdr = val;
-	else
+		pmemops_persist(&m->heap->p_ops, hdr, sizeof(*hdr));
+	} else {
 		operation_add_entry(ctx, hdr, val, REDO_OPERATION_SET);
+	}
 
 	VALGRIND_DO_MAKE_MEM_NOACCESS(hdr + 1,
 		(hdr->size_idx - 1) * sizeof(struct chunk_header));
@@ -504,6 +506,7 @@ huge_prep_operation_hdr(const struct memory_block *m, enum memblock_state op,
 	 */
 	if (ctx == NULL) {
 		*(uint64_t *)footer = val;
+		VALGRIND_SET_CLEAN(footer, sizeof(*footer));
 	} else {
 		operation_add_typed_entry(ctx,
 			footer, val, REDO_OPERATION_SET, LOG_TRANSIENT);

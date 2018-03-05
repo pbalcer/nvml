@@ -115,26 +115,6 @@ struct tx_range_def {
 	uint64_t flags;
 };
 
-/*
- * tx_clr_flag -- flags for clearing undo log list
- */
-enum tx_clr_flag {
-	/* remove and free each object */
-	TX_CLR_FLAG_FREE = 1 << 0,
-
-	/* clear valgrind state */
-	TX_CLR_FLAG_VG_CLEAN = 1 << 1,
-
-	/* remove from valgrind tx */
-	TX_CLR_FLAG_VG_TX_REMOVE = 1 << 2,
-
-	/*
-	 * Conditionally remove and free each object, this is only safe in a
-	 * single threaded context such as transaction recovery.
-	 */
-	TX_CLR_FLAG_FREE_IF_EXISTS = 1 << 3,
-};
-
 struct tx_parameters {
 	size_t cache_size;
 	size_t cache_threshold;
@@ -298,18 +278,6 @@ constructor_tx_add_range(void *ctx, void *ptr, size_t usable_size, void *arg)
 }
 
 /*
- * tx_clear_vec_entry -- (internal) clear undo log vector entry
- */
-static void
-tx_clear_vec_entry(PMEMobjpool *pop, uint64_t *entry)
-{
-	VALGRIND_ADD_TO_TX(entry, sizeof(*entry));
-	*entry = 0;
-	pmemops_persist(&pop->p_ops, entry, sizeof(*entry));
-	VALGRIND_REMOVE_FROM_TX(entry, sizeof(*entry));
-}
-
-/*
  * tx_free_vec_entry -- free the undo log vector entry
  */
 static void
@@ -319,73 +287,17 @@ tx_free_vec_entry(PMEMobjpool *pop, uint64_t *entry)
 }
 
 /*
- * tx_free_existing_vec_entry -- free the undo log vector entry if it points to
- *	a valid object, otherwise zero it.
- */
-static void
-tx_free_existing_vec_entry(PMEMobjpool *pop, uint64_t *entry)
-{
-	if (*entry != 0 && palloc_is_allocated(&pop->heap, *entry))
-		pfree(pop, entry);
-	else
-		tx_clear_vec_entry(pop, entry);
-}
-
-/*
- * tx_clear_undo_log_vg -- (internal) tell Valgrind about removal from undo log
- */
-static void
-tx_clear_undo_log_vg(PMEMobjpool *pop, uint64_t off, enum tx_clr_flag flags)
-{
-#if VG_PMEMCHECK_ENABLED
-	if (!On_valgrind)
-		return;
-
-	/*
-	 * Clean the valgrind state of the underlying memory for
-	 * allocated objects in the undo log, so that not-persisted
-	 * modifications after abort are not reported.
-	 */
-	if (flags & TX_CLR_FLAG_VG_CLEAN) {
-		void *ptr = OBJ_OFF_TO_PTR(pop, off);
-		size_t size = palloc_usable_size(&pop->heap, off);
-
-		VALGRIND_SET_CLEAN(ptr, size);
-	}
-
-	if (flags & TX_CLR_FLAG_VG_TX_REMOVE) {
-		/*
-		 * This function can be called from transaction
-		 * recovery, so in such case pmemobj_alloc_usable_size
-		 * is not yet available. Use pmalloc version.
-		 */
-		size_t size = palloc_usable_size(&pop->heap, off);
-		VALGRIND_REMOVE_FROM_TX(OBJ_OFF_TO_PTR(pop, off), size);
-	}
-#endif
-}
-
-/*
  * tx_clear_undo_log -- (internal) clear undo log pointed by head
  */
 static void
-tx_clear_undo_log(PMEMobjpool *pop, struct pvector_context *undo,
-	enum tx_clr_flag flags)
+tx_clear_undo_log(PMEMobjpool *pop, struct pvector_context *undo)
 {
 	LOG(7, NULL);
 
 	uint64_t val;
 
 	while ((val = pvector_last(undo)) != 0) {
-		tx_clear_undo_log_vg(pop, val, flags);
-
-		if (flags & TX_CLR_FLAG_FREE) {
-			pvector_pop_back(undo, tx_free_vec_entry);
-		} else if (flags & TX_CLR_FLAG_FREE_IF_EXISTS) {
-			pvector_pop_back(undo, tx_free_existing_vec_entry);
-		} else {
-			pvector_pop_back(undo, tx_clear_vec_entry);
-		}
+		pvector_pop_back(undo, tx_free_vec_entry);
 	}
 }
 
@@ -578,7 +490,7 @@ tx_abort_recover_range(PMEMobjpool *pop, struct tx *tx, struct tx_range *range)
  */
 static void
 tx_clear_set_cache_but_first(PMEMobjpool *pop, struct tx_undo_runtime *tx_rt,
-	struct tx *tx, enum tx_clr_flag vg_flags)
+	struct tx *tx)
 {
 	LOG(4, NULL);
 
@@ -593,13 +505,10 @@ tx_clear_set_cache_but_first(PMEMobjpool *pop, struct tx_undo_runtime *tx_rt,
 	int zero_all = tx == NULL;
 
 	while ((off = pvector_last(cache_undo)) != first_cache) {
-		tx_clear_undo_log_vg(pop, off, vg_flags);
-
 		pvector_pop_back(cache_undo, tx_free_vec_entry);
 		zero_all = 1;
 	}
 
-	tx_clear_undo_log_vg(pop, first_cache, vg_flags);
 	struct tx_range_cache *cache = OBJ_OFF_TO_PTR(pop, first_cache);
 
 	size_t sz;
@@ -643,25 +552,11 @@ tx_abort_set(PMEMobjpool *pop, struct tx_undo_runtime *tx_rt, int recovery)
 		tx_foreach_set(pop, tx, tx_rt, tx_abort_restore_range);
 
 	if (recovery) /* if recovering from a crash, remove all of the caches */
-		tx_clear_undo_log(pop, tx_rt->ctx[UNDO_SET_CACHE],
-			TX_CLR_FLAG_FREE | TX_CLR_FLAG_VG_CLEAN);
+		tx_clear_undo_log(pop, tx_rt->ctx[UNDO_SET_CACHE]);
 	else /* otherwise leave the first one */
-		tx_clear_set_cache_but_first(pop, tx_rt, tx,
-			TX_CLR_FLAG_VG_CLEAN);
+		tx_clear_set_cache_but_first(pop, tx_rt, tx);
 
-	tx_clear_undo_log(pop, tx_rt->ctx[UNDO_SET],
-		TX_CLR_FLAG_FREE | TX_CLR_FLAG_VG_CLEAN);
-}
-
-/*
- * tx_cancel_reservations -- cancels all volatile state allocation reservations
- */
-static void
-tx_cancel_reservations(PMEMobjpool *pop, struct lane_tx_runtime *lane)
-{
-	palloc_cancel(&pop->heap,
-		VEC_ARR(&lane->actions), (int)VEC_SIZE(&lane->actions));
-	VEC_CLEAR(&lane->actions);
+	tx_clear_undo_log(pop, tx_rt->ctx[UNDO_SET]);
 }
 
 /*
@@ -676,6 +571,17 @@ tx_flush_range(void *data, void *ctx)
 		pmemops_flush(&pop->p_ops, OBJ_OFF_TO_PTR(pop, range->offset),
 				range->size);
 	}
+}
+
+/*
+ * tx_clean_range -- (internal) clean one range
+ */
+static void
+tx_clean_range(void *data, void *ctx)
+{
+	PMEMobjpool *pop = ctx;
+	struct tx_range_def *range = data;
+	VALGRIND_SET_CLEAN(OBJ_OFF_TO_PTR(pop, range->offset), range->size);
 }
 
 /*
@@ -778,16 +684,18 @@ tx_abort(PMEMobjpool *pop, struct lane_tx_runtime *lane,
 	}
 #endif
 
-	tx_abort_set(pop, tx_rt, recovery);
-
-	if (recovery) {
-		tx_destroy_undo_runtime(tx_rt);
-	} else {
-		tx_cancel_reservations(pop, lane);
-		ASSERTne(lane, NULL);
-		ravl_delete(lane->ranges);
+	if (lane != NULL) {
+		palloc_cancel(&pop->heap,
+			VEC_ARR(&lane->actions), (int)VEC_SIZE(&lane->actions));
+		VEC_CLEAR(&lane->actions);
+		ravl_delete_cb(lane->ranges, tx_clean_range, NULL);
 		lane->ranges = NULL;
 	}
+
+	tx_abort_set(pop, tx_rt, recovery);
+
+	if (recovery)
+		tx_destroy_undo_runtime(tx_rt);
 }
 
 /*
@@ -2032,6 +1940,7 @@ tx_redo_log_constructor(void *ctx, void *ptr, size_t usable_size, void *arg)
 {
 	PMEMobjpool *pop = ctx;
 	const struct pmem_ops *p_ops = &pop->p_ops;
+	VALGRIND_ADD_TO_TX(ptr, usable_size);
 
 	struct redo_log *redo = ptr;
 	redo->capacity = TX_REDO_LOG_EXTEND_SIZE;
@@ -2040,6 +1949,8 @@ tx_redo_log_constructor(void *ctx, void *ptr, size_t usable_size, void *arg)
 	memset(redo->unused, 0, sizeof(redo->unused));
 
 	pmemops_flush(p_ops, redo, sizeof(*redo));
+
+	VALGRIND_REMOVE_FROM_TX(ptr, usable_size);
 
 	return 0;
 }
