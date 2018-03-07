@@ -144,9 +144,9 @@ pvector_reinit(struct pvector_context *ctx)
 }
 
 void
-pvector_reset(struct pvector_context *ctx)
+pvector_reset(struct pvector_context *ctx, size_t size)
 {
-	ctx->nvalues = 0;
+	ctx->nvalues = size;
 }
 
 /*

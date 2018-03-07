@@ -527,7 +527,7 @@ palloc_cancel(struct palloc_heap *heap,
 	struct pobj_action *actv, size_t actvcnt)
 {
 	struct pobj_action_internal *act;
-	for (int i = 0; i < actvcnt; ++i) {
+	for (size_t i = 0; i < actvcnt; ++i) {
 		act = (struct pobj_action_internal *)&actv[i];
 		action_funcs[act->type].on_cancel(heap, act);
 	}

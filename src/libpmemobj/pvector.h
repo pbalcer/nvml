@@ -79,7 +79,7 @@ typedef void (*entry_op_callback)(PMEMobjpool *pop, uint64_t *entry);
 struct pvector_context *pvector_new(PMEMobjpool *pop, struct pvector *vec);
 void pvector_reinit(struct pvector_context *ctx);
 void pvector_delete(struct pvector_context *ctx);
-void pvector_reset(struct pvector_context *ctx);
+void pvector_reset(struct pvector_context *ctx, size_t size);
 size_t pvector_size(struct pvector_context *ctx);
 size_t pvector_capacity(struct pvector_context *ctx);
 int pvector_reserve(struct pvector_context *ctx, size_t size);

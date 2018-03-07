@@ -1142,10 +1142,14 @@ tx_post_commit(struct tx *tx, struct lane_tx_runtime *lane)
 	 * At this point the transaction is completed but we still need
 	 * to clear the first set cache.
 	 */
-	tx_clear_set_cache_but_first(tx->pop, &lane->undo, tx);
+	struct pvector_context *cache = lane->undo.ctx[UNDO_SET_CACHE];
+	if (pvector_size(cache) > 0) {
+		pvector_reset(cache, 1);
+		tx_clear_set_cache_but_first(tx->pop, &lane->undo, tx);
+	}
 
-	pvector_reset(lane->undo.ctx[0]);
-	pvector_reset(lane->undo.ctx[1]);
+	pvector_reset(lane->undo.ctx[UNDO_SET], 0);
+
 	VEC_CLEAR(&lane->actions);
 }
 
