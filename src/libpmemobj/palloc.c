@@ -204,6 +204,7 @@ palloc_reservation_create(struct palloc_heap *heap, size_t size,
 		return -1;
 	}
 	ASSERT(size_idx <= UINT32_MAX);
+	*new_block = MEMORY_BLOCK_NONE;
 	new_block->size_idx = (uint32_t)size_idx;
 
 	struct bucket *b = heap_bucket_acquire(heap, c);
@@ -419,17 +420,17 @@ static void
 palloc_exec_actions(struct palloc_heap *heap,
 	struct operation_context *ctx,
 	struct pobj_action_internal *actv,
-	int actvcnt)
+	size_t actvcnt)
 {
 	/*
 	 * The operations array is sorted so that proper lock ordering is
 	 * ensured.
 	 */
-	qsort(actv, (size_t)actvcnt, sizeof(struct pobj_action_internal),
+	qsort(actv, actvcnt, sizeof(struct pobj_action_internal),
 		palloc_action_compare);
 
 	struct pobj_action_internal *act;
-	for (int i = 0; i < actvcnt; ++i) {
+	for (size_t i = 0; i < actvcnt; ++i) {
 		act = &actv[i];
 
 		/*
@@ -452,7 +453,7 @@ palloc_exec_actions(struct palloc_heap *heap,
 
 	operation_process(ctx);
 
-	for (int i = 0; i < actvcnt; ++i) {
+	for (size_t i = 0; i < actvcnt; ++i) {
 		act = &actv[i];
 
 		action_funcs[act->type].on_process(heap, act);
@@ -463,7 +464,7 @@ palloc_exec_actions(struct palloc_heap *heap,
 		}
 	}
 
-	for (int i = 0; i < actvcnt; ++i) {
+	for (size_t i = 0; i < actvcnt; ++i) {
 		act = &actv[i];
 
 		action_funcs[act->type].on_unlock(heap, act);
@@ -523,7 +524,7 @@ palloc_defer_free(struct palloc_heap *heap, uint64_t off,
  */
 void
 palloc_cancel(struct palloc_heap *heap,
-	struct pobj_action *actv, int actvcnt)
+	struct pobj_action *actv, size_t actvcnt)
 {
 	struct pobj_action_internal *act;
 	for (int i = 0; i < actvcnt; ++i) {
@@ -537,7 +538,7 @@ palloc_cancel(struct palloc_heap *heap,
  */
 void
 palloc_publish(struct palloc_heap *heap,
-	struct pobj_action *actv, int actvcnt,
+	struct pobj_action *actv, size_t actvcnt,
 	struct operation_context *ctx)
 {
 	palloc_exec_actions(heap, ctx,
@@ -587,7 +588,7 @@ palloc_operation(struct palloc_heap *heap,
 {
 	size_t user_size = 0;
 
-	int nops = 0;
+	size_t nops = 0;
 	struct pobj_action_internal ops[2];
 	struct pobj_action_internal *alloc = NULL;
 	struct pobj_action_internal *dealloc = NULL;
@@ -609,8 +610,10 @@ palloc_operation(struct palloc_heap *heap,
 	if (size != 0) {
 		alloc = &ops[nops++];
 		if (palloc_reservation_create(heap, size, constructor, arg,
-			extra_field, object_flags, class_id, alloc) != 0)
+			extra_field, object_flags, class_id, alloc) != 0) {
+			operation_cancel(ctx);
 			return -1;
+		}
 	}
 
 	/* realloc */

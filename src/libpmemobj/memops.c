@@ -62,6 +62,7 @@ operation_new(void *base, const struct redo_ctx *redo_ctx,
 	ctx->redo_capacity = redo_log_capacity(redo_ctx, redo,
 		redo_base_capacity);
 	ctx->extend = extend;
+	ctx->in_progress = 0;
 	if (redo_ctx)
 		ctx->p_ops = redo_get_pmem_ops(redo_ctx);
 	else
@@ -70,13 +71,13 @@ operation_new(void *base, const struct redo_ctx *redo_ctx,
 	for (int i = 0; i < MAX_OPERATION_LOG_TYPE; ++i) {
 		ctx->logs[i].capacity = REDO_LOG_BASE_ENTRIES;
 		ctx->logs[i].size = 0;
-		struct redo_log *redo = Malloc(sizeof(struct redo_log) +
+
+		struct redo_log *src = Zalloc(sizeof(struct redo_log) +
 		(sizeof(struct redo_log_entry) * REDO_LOG_BASE_ENTRIES));
+		src->capacity = redo_base_capacity;
+		memset(src->unused, 0, sizeof(src->unused));
 
-		redo->capacity = redo_base_capacity;
-		memset(redo->unused, 0, sizeof(redo->unused));
-
-		ctx->logs[i].redo = redo;
+		ctx->logs[i].redo = src;
 	}
 
 	return ctx;
@@ -218,9 +219,6 @@ operation_init(struct operation_context *ctx)
 {
 	struct operation_log *plog = &ctx->logs[LOG_PERSISTENT];
 	struct operation_log *tlog = &ctx->logs[LOG_TRANSIENT];
-	VALGRIND_ANNOTATE_NEW_MEMORY(tlog, sizeof(*tlog));
-	VALGRIND_ANNOTATE_NEW_MEMORY(tlog, sizeof(*tlog));
-
 	VALGRIND_ANNOTATE_NEW_MEMORY(ctx, sizeof(*ctx));
 	VALGRIND_ANNOTATE_NEW_MEMORY(tlog->redo, sizeof(struct redo_log) +
 		(sizeof(struct redo_log_entry) * tlog->capacity));
@@ -228,6 +226,14 @@ operation_init(struct operation_context *ctx)
 		(sizeof(struct redo_log_entry) * plog->capacity));
 	tlog->size = 0;
 	plog->size = 0;
+}
+
+void
+operation_start(struct operation_context *ctx)
+{
+	operation_init(ctx);
+	ASSERTeq(ctx->in_progress, 0);
+	ctx->in_progress = 1;
 }
 
 /*
@@ -262,5 +268,13 @@ operation_process(struct operation_context *ctx)
 		e = &tlog->redo->entries[i];
 		redo_log_entry_apply(ctx->base, e, operation_transient_clean);
 	}
+	ASSERTeq(ctx->in_progress, 1);
+	ctx->in_progress = 0;
+}
 
+void
+operation_cancel(struct operation_context *ctx)
+{
+	ASSERTeq(ctx->in_progress, 1);
+	ctx->in_progress = 0;
 }

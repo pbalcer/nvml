@@ -102,8 +102,11 @@ lane_need_recovery_alloc(struct pmem_info *pip,
 
 	/* there is just a redo log */
 	return lane_need_recovery_redo(pip->obj.pop,
-		(struct redo_log *)&section->redo,
-		ALLOC_REDO_LOG_SIZE);
+		(struct redo_log *)&section->external,
+		ALLOC_REDO_EXTERNAL_SIZE) ||
+		lane_need_recovery_redo(pip->obj.pop,
+			(struct redo_log *)&section->internal,
+			ALLOC_REDO_INTERNAL_SIZE);
 }
 
 #define PVECTOR_EMPTY(_pvec) ((_pvec).embedded[0] == 0)
@@ -255,8 +258,10 @@ info_obj_lane_alloc(int v, struct lane_section_layout *layout)
 {
 	struct lane_alloc_layout *section =
 		(struct lane_alloc_layout *)layout;
-	info_obj_redo(v, (struct redo_log *)&section->redo,
-		ALLOC_REDO_LOG_SIZE);
+	info_obj_redo(v, (struct redo_log *)&section->internal,
+		ALLOC_REDO_INTERNAL_SIZE);
+	info_obj_redo(v, (struct redo_log *)&section->external,
+		ALLOC_REDO_EXTERNAL_SIZE);
 }
 
 /*

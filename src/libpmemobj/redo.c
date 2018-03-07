@@ -204,7 +204,6 @@ redo_log_store(const struct redo_ctx *ctx, struct redo_log *dest,
 	struct redo_log *src, size_t nentries, size_t redo_capacity)
 {
 	src->entries[nentries - 1].offset |= REDO_FINISH_FLAG;
-	redo_log_checksum(src, nentries, 1);
 
 	struct redo_log *redo = dest;
 	size_t offset = redo_capacity;
@@ -225,6 +224,8 @@ redo_log_store(const struct redo_ctx *ctx, struct redo_log *dest,
 	}
 
 	src->next = dest->next;
+	redo_log_checksum(src, nentries, 1);
+
 	pmemops_memcpy_persist(&ctx->p_ops, dest, src,
 		SIZEOF_REDO_LOG(dest_ncopy));
 }

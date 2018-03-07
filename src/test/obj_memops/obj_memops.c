@@ -44,6 +44,13 @@
 
 #define TEST_VALUES 100
 
+enum fail_types {
+	FAIL_NONE,
+	FAIL_CHECKSUM,
+	FAIL_MODIFY_NEXT,
+	FAIL_MODIFY_VALUE,
+};
+
 struct test_object {
 	struct REDO_LOG(TEST_ENTRIES) redo;
 	uint64_t values[TEST_VALUES];
@@ -53,74 +60,6 @@ static void
 clear_test_values(struct test_object *object)
 {
 	memset(object->values, 0, sizeof(uint64_t) * TEST_VALUES);
-}
-
-static void
-test_set_entries(struct operation_context *ctx, struct test_object *object,
-	size_t nentries, int invalid)
-{
-	operation_init(ctx);
-
-	for (size_t i = 0; i < nentries; ++i) {
-		operation_add_typed_entry(ctx,
-			&object->values[i], i,
-			REDO_OPERATION_SET, LOG_PERSISTENT);
-	}
-
-	operation_reserve(ctx, nentries);
-
-	if (invalid) {
-		ctx->redo->entries[1].offset += 8;
-
-		redo_log_recover(ctx->redo_ctx, ctx->redo);
-
-		UT_ASSERTeq(object->values[0], 0);
-		UT_ASSERTeq(object->values[1], 0);
-
-		for (size_t i = 0; i < nentries; ++i)
-			UT_ASSERTeq(object->values[i], 0);
-	} else {
-		operation_process(ctx);
-
-		for (size_t i = 0; i < nentries; ++i)
-			UT_ASSERTeq(object->values[i], i);
-	}
-}
-
-static void
-test_same_twice(struct operation_context *ctx, struct test_object *object)
-{
-	operation_init(ctx);
-
-	operation_add_typed_entry(ctx,
-		&object->values[0], 5,
-		REDO_OPERATION_SET, LOG_PERSISTENT);
-
-	operation_add_typed_entry(ctx,
-		&object->values[0], 10,
-		REDO_OPERATION_SET, LOG_PERSISTENT);
-
-	operation_process(ctx);
-
-	UT_ASSERTeq(object->values[0], 5);
-}
-
-static void
-test_merge_op(struct operation_context *ctx, struct test_object *object)
-{
-	operation_init(ctx);
-
-	operation_add_typed_entry(ctx,
-		&object->values[0], 0b01,
-		REDO_OPERATION_OR, LOG_PERSISTENT);
-
-	operation_add_typed_entry(ctx,
-		&object->values[0], 0b10,
-		REDO_OPERATION_OR, LOG_PERSISTENT);
-
-	operation_process(ctx);
-
-	UT_ASSERTeq(object->values[0], 0b11);
 }
 
 static int
@@ -141,12 +80,95 @@ redo_log_constructor(void *ctx, void *ptr, size_t usable_size, void *arg)
 }
 
 static int
-pmalloc_redo_extend(void *ctx, uint64_t *redo)
+pmalloc_redo_extend(void *base, uint64_t *redo)
 {
 	size_t s = SIZEOF_REDO_LOG(TEST_ENTRIES);
 
-	return pmalloc_construct(ctx, redo, s, redo_log_constructor, NULL, 0,
+	return pmalloc_construct(base, redo, s, redo_log_constructor, NULL, 0,
 		OBJ_INTERNAL_OBJECT_MASK, 0);
+}
+
+static void
+test_set_entries(struct operation_context *ctx, struct test_object *object,
+	size_t nentries, enum fail_types fail)
+{
+	operation_start(ctx);
+
+	for (size_t i = 0; i < nentries; ++i) {
+		operation_add_typed_entry(ctx,
+			&object->values[i], i,
+			REDO_OPERATION_SET, LOG_PERSISTENT);
+	}
+
+	operation_reserve(ctx, nentries);
+
+	if (fail != FAIL_NONE) {
+		operation_cancel(ctx);
+
+		switch (fail) {
+			case FAIL_CHECKSUM:
+				ctx->redo->checksum += 1;
+			break;
+			case FAIL_MODIFY_NEXT:
+				pmalloc_redo_extend(ctx->base,
+					&ctx->redo->next);
+			break;
+			case FAIL_MODIFY_VALUE:
+				ctx->redo->entries[1].offset += 8;
+			break;
+			default:
+				UT_ASSERT(0);
+		}
+
+		redo_log_recover(ctx->redo_ctx, ctx->redo);
+
+		UT_ASSERTeq(object->values[0], 0);
+		UT_ASSERTeq(object->values[1], 0);
+
+		for (size_t i = 0; i < nentries; ++i)
+			UT_ASSERTeq(object->values[i], 0);
+	} else {
+		operation_process(ctx);
+
+		for (size_t i = 0; i < nentries; ++i)
+			UT_ASSERTeq(object->values[i], i);
+	}
+}
+
+static void
+test_same_twice(struct operation_context *ctx, struct test_object *object)
+{
+	operation_start(ctx);
+
+	operation_add_typed_entry(ctx,
+		&object->values[0], 5,
+		REDO_OPERATION_SET, LOG_PERSISTENT);
+
+	operation_add_typed_entry(ctx,
+		&object->values[0], 10,
+		REDO_OPERATION_SET, LOG_PERSISTENT);
+
+	operation_process(ctx);
+
+	UT_ASSERTeq(object->values[0], 5);
+}
+
+static void
+test_merge_op(struct operation_context *ctx, struct test_object *object)
+{
+	operation_start(ctx);
+
+	operation_add_typed_entry(ctx,
+		&object->values[0], 0b01,
+		REDO_OPERATION_OR, LOG_PERSISTENT);
+
+	operation_add_typed_entry(ctx,
+		&object->values[0], 0b10,
+		REDO_OPERATION_OR, LOG_PERSISTENT);
+
+	operation_process(ctx);
+
+	UT_ASSERTeq(object->values[0], 0b11);
 }
 
 int
@@ -182,9 +204,17 @@ main(int argc, char *argv[])
 	clear_test_values(object);
 	test_set_entries(ctx, object, 100, 0);
 	clear_test_values(object);
-	test_set_entries(ctx, object, 100, 1);
+	test_set_entries(ctx, object, 100, FAIL_CHECKSUM);
 	clear_test_values(object);
-	test_set_entries(ctx, object, 10, 1);
+	test_set_entries(ctx, object, 10, FAIL_CHECKSUM);
+	clear_test_values(object);
+	test_set_entries(ctx, object, 100, FAIL_MODIFY_NEXT);
+	clear_test_values(object);
+	test_set_entries(ctx, object, 10, FAIL_MODIFY_NEXT);
+	clear_test_values(object);
+	test_set_entries(ctx, object, 100, FAIL_MODIFY_VALUE);
+	clear_test_values(object);
+	test_set_entries(ctx, object, 10, FAIL_MODIFY_VALUE);
 
 	operation_delete(ctx);
 

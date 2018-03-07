@@ -69,8 +69,6 @@ enum redo_operation_type {
 	REDO_OPERATION_SET	=	0b00,
 	REDO_OPERATION_AND	=	0b01,
 	REDO_OPERATION_OR	=	0b10,
-
-	MAX_OPERATION_TYPE
 };
 
 typedef int (*redo_check_offset_fn)(void *ctx, uint64_t offset);

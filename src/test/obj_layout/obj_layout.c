@@ -216,7 +216,8 @@ main(int argc, char *argv[])
 //		SIZEOF_LANE_LIST_LAYOUT_V3);
 
 	ASSERT_ALIGNED_BEGIN(struct lane_alloc_layout);
-	ASSERT_ALIGNED_FIELD(struct lane_alloc_layout, redo);
+	ASSERT_ALIGNED_FIELD(struct lane_alloc_layout, internal);
+	ASSERT_ALIGNED_FIELD(struct lane_alloc_layout, external);
 	ASSERT_ALIGNED_CHECK(struct lane_alloc_layout);
 	UT_COMPILE_ERROR_ON(sizeof(struct lane_alloc_layout) >
 		sizeof(struct lane_section_layout));

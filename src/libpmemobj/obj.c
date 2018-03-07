@@ -2791,7 +2791,7 @@ pmemobj_publish(PMEMobjpool *pop, struct pobj_action *actv, int actvcnt)
 {
 	struct operation_context *ctx = pmalloc_operation_hold(pop);
 
-	palloc_publish(&pop->heap, actv, actvcnt, ctx);
+	palloc_publish(&pop->heap, actv, (size_t)actvcnt, ctx);
 
 	pmalloc_operation_release(pop);
 }
@@ -2802,7 +2802,7 @@ pmemobj_publish(PMEMobjpool *pop, struct pobj_action *actv, int actvcnt)
 void
 pmemobj_cancel(PMEMobjpool *pop, struct pobj_action *actv, int actvcnt)
 {
-	palloc_cancel(&pop->heap, actv, actvcnt);
+	palloc_cancel(&pop->heap, actv, (size_t)actvcnt);
 }
 
 /*

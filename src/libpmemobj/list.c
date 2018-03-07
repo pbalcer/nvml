@@ -504,9 +504,6 @@ list_insert_new(PMEMobjpool *pop,
 	struct lane_list_layout *section =
 		(struct lane_list_layout *)lane_section->layout;
 
-	struct operation_context *ctx = lane_section->runtime;
-	operation_init(ctx);
-
 	if (constructor) {
 		if ((ret = pmalloc_construct(pop,
 				&section->obj_offset, size,
@@ -521,6 +518,9 @@ list_insert_new(PMEMobjpool *pop,
 			goto err_pmalloc;
 		}
 	}
+
+	struct operation_context *ctx = lane_section->runtime;
+	operation_start(ctx);
 
 	uint64_t obj_doffset = section->obj_offset;
 
@@ -656,7 +656,7 @@ list_insert(PMEMobjpool *pop,
 	ASSERTne(lane_section->layout, NULL);
 
 	struct operation_context *ctx = lane_section->runtime;
-	operation_init(ctx);
+	operation_start(ctx);
 
 	dest = list_get_dest(pop, head, dest, pe_offset, before);
 
@@ -733,7 +733,7 @@ list_remove_free(PMEMobjpool *pop, size_t pe_offset,
 	struct lane_list_layout *section =
 		(struct lane_list_layout *)lane_section->layout;
 	struct operation_context *ctx = lane_section->runtime;
-	operation_init(ctx);
+	operation_start(ctx);
 
 	uint64_t obj_doffset = oidp->off;
 
@@ -834,7 +834,7 @@ list_remove(PMEMobjpool *pop,
 	}
 
 	struct operation_context *ctx = lane_section->runtime;
-	operation_init(ctx);
+	operation_start(ctx);
 
 	struct list_entry *entry_ptr =
 		(struct list_entry *)OBJ_OFF_TO_PTR(pop,
@@ -914,7 +914,7 @@ list_move(PMEMobjpool *pop,
 	}
 
 	struct operation_context *ctx = lane_section->runtime;
-	operation_init(ctx);
+	operation_start(ctx);
 
 	dest = list_get_dest(pop, head_new, dest,
 		(ssize_t)pe_offset_new, before);

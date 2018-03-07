@@ -81,11 +81,11 @@ palloc_defer_free(struct palloc_heap *heap, uint64_t off,
 
 void
 palloc_cancel(struct palloc_heap *heap,
-	struct pobj_action *actv, int actvcnt);
+	struct pobj_action *actv, size_t actvcnt);
 
 void
 palloc_publish(struct palloc_heap *heap,
-	struct pobj_action *actv, int actvcnt,
+	struct pobj_action *actv, size_t actvcnt,
 	struct operation_context *ctx);
 
 void
