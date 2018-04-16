@@ -336,8 +336,8 @@ recycler_recalc(struct recycler *r, int force)
 	uint64_t key;
 	struct ravl_node *n;
 	do {
-		if ((n = ravl_find(r->runs, (void *)0,
-			RAVL_PREDICATE_GREATER_EQUAL)) == NULL)
+		if ((n = ravl_find(r->runs, (void *)(~0),
+			RAVL_PREDICATE_LESS_EQUAL)) == NULL)
 			break;
 		key = (uint64_t)ravl_data(n);
 		ravl_remove(r->runs, n);
