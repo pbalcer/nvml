@@ -56,7 +56,7 @@
 #define RUN_KEY_GET_FREE_SPACE(k)\
 ((uint16_t)((k) >> 32))
 
-#define THRESHOLD_MUL 2
+#define THRESHOLD_MUL 4
 
 struct recycler_element {
 	uint32_t chunk_id;
@@ -87,10 +87,10 @@ struct recycler {
 	 * The value is not meant to be accurate, but rather a rough measure on
 	 * how often should the memory block scores be recalculated.
 	 */
-	size_t unaccounted_units;
+	size_t unaccounted_units[MAX_CHUNK];
+	size_t unaccounted_total;
 	size_t nallocs;
 	size_t recalc_threshold;
-	int recalc_inprogress;
 
 	VEC(, uint64_t) recalc;
 	VEC(, struct memory_block_reserved *) pending;
@@ -115,8 +115,9 @@ recycler_new(struct palloc_heap *heap, size_t nallocs)
 	r->heap = heap;
 	r->nallocs = nallocs;
 	r->recalc_threshold = nallocs * THRESHOLD_MUL;
-	r->unaccounted_units = 0;
-	r->recalc_inprogress = 0;
+	r->unaccounted_total = 0;
+	memset(&r->unaccounted_units, 0, sizeof(r->unaccounted_units));
+
 	VEC_INIT(&r->recalc);
 	VEC_INIT(&r->pending);
 
@@ -168,7 +169,6 @@ recycler_calc_score(struct palloc_heap *heap, const struct memory_block *m,
 
 	struct zone *z = ZID_TO_ZONE(heap->layout, m->zone_id);
 	struct chunk_run *run = (struct chunk_run *)&z->chunks[m->chunk_id];
-
 
 	uint16_t free_space = 0;
 	uint16_t max_block = 0;
@@ -306,7 +306,7 @@ recycler_pending_put(struct recycler *r,
 {
 	VEC_PUSH_BACK(&r->pending, m);
 }
-
+#include <pthread.h>
 /*
  * recycler_recalc -- recalculates the scores of runs in the recycler to match
  *	the updated persistent state
@@ -317,15 +317,13 @@ recycler_recalc(struct recycler *r, int force)
 	struct empty_runs runs;
 	VEC_INIT(&runs);
 
-	uint64_t units = r->unaccounted_units;
+	uint64_t units = r->unaccounted_total;
 
-	if (r->recalc_inprogress || (!force && units < (r->recalc_threshold)))
+	if (!force && units < (r->recalc_threshold))
 		return runs;
 
-	if (!util_bool_compare_and_swap32(&r->recalc_inprogress, 0, 1))
+	if (util_mutex_trylock(&r->lock) != 0)
 		return runs;
-
-	util_mutex_lock(&r->lock);
 
 	/* If the search is forced, recalculate everything */
 	uint64_t search_limit = force ? UINT64_MAX : units;
@@ -335,15 +333,23 @@ recycler_recalc(struct recycler *r, int force)
 	struct memory_block nm = MEMORY_BLOCK_NONE;
 	uint64_t key;
 	struct ravl_node *n;
+	void *sdata = NULL;
+	enum ravl_predicate p = RAVL_PREDICATE_GREATER_EQUAL;
 	do {
-		if ((n = ravl_find(r->runs, (void *)0,
-			RAVL_PREDICATE_GREATER_EQUAL)) == NULL)
+		if ((n = ravl_find(r->runs, sdata, p)) == NULL)
 			break;
-		key = (uint64_t)ravl_data(n);
-		ravl_remove(r->runs, n);
+
+		p = RAVL_PREDICATE_GREATER;
+		sdata = ravl_data(n);
+		key = (uint64_t)sdata;
 
 		nm.chunk_id = RUN_KEY_GET_CHUNK_ID(key);
 		nm.zone_id = RUN_KEY_GET_ZONE_ID(key);
+
+		uint64_t chunk_units = r->unaccounted_units[nm.chunk_id];
+		if (!force && chunk_units == 0)
+			continue;
+
 		uint64_t key_free_space = RUN_KEY_GET_FREE_SPACE(key);
 		memblock_rebuild_state(r->heap, &nm);
 
@@ -353,6 +359,14 @@ recycler_recalc(struct recycler *r, int force)
 		uint64_t free_space_diff = free_space - key_free_space;
 		found_units += free_space_diff;
 
+		util_fetch_and_sub64(&r->unaccounted_units[nm.chunk_id],
+			MIN(chunk_units, free_space_diff + r->nallocs));
+
+		if (free_space_diff == 0)
+			continue;
+
+		ravl_remove(r->runs, n);
+
 		if (free_space == r->nallocs) {
 			memblock_rebuild_state(r->heap, &nm);
 			VEC_PUSH_BACK(&runs, nm);
@@ -360,6 +374,8 @@ recycler_recalc(struct recycler *r, int force)
 			VEC_PUSH_BACK(&r->recalc, score);
 		}
 	} while (found_units < search_limit);
+	
+	//printf("found %lu %lu %lu\n", units, r->unaccounted_total, found_units);
 
 	VEC_FOREACH(key, &r->recalc) {
 		ravl_insert(r->runs, (void *)key);
@@ -369,9 +385,7 @@ recycler_recalc(struct recycler *r, int force)
 
 	util_mutex_unlock(&r->lock);
 
-	util_fetch_and_sub64(&r->unaccounted_units, units);
-	int ret = util_bool_compare_and_swap32(&r->recalc_inprogress, 1, 0);
-	ASSERTeq(ret, 1);
+	util_fetch_and_sub64(&r->unaccounted_total, units);
 
 	return runs;
 }
@@ -383,5 +397,7 @@ recycler_recalc(struct recycler *r, int force)
 void
 recycler_inc_unaccounted(struct recycler *r, const struct memory_block *m)
 {
-	util_fetch_and_add64(&r->unaccounted_units, m->size_idx);
+	util_fetch_and_add64(&r->unaccounted_total, m->size_idx);
+	util_fetch_and_add64(&r->unaccounted_units[m->chunk_id],
+		m->size_idx);
 }

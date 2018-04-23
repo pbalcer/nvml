@@ -56,7 +56,7 @@
 #define SIZEOF_RUN(runp, size_idx)\
 	(sizeof(*(runp)) + (((size_idx) - 1) * CHUNKSIZE))
 
-#define MAX_RUN_LOCKS 1024
+#define MAX_RUN_LOCKS MAX_CHUNK
 
 /*
  * This is the value by which the heap might grow once we hit an OOM.
@@ -429,34 +429,42 @@ heap_run_init(struct palloc_heap *heap, struct bucket *b,
 		sizeof(struct chunk_header) * m->size_idx);
 }
 
-/*
- * heap_run_insert -- (internal) inserts and splits a block of memory into a run
- */
-static void
-heap_run_insert(struct palloc_heap *heap, struct bucket *b,
-	const struct memory_block *m, uint32_t size_idx, uint16_t block_off)
+static uint32_t
+heap_run_process_bitmap_value(struct bucket *b, struct memory_block *m,
+	uint64_t value, uint16_t base_offset)
 {
-	struct alloc_class *c = b->aclass;
-	ASSERTeq(c->type, CLASS_RUN);
-
-	ASSERT(size_idx <= BITS_PER_VALUE);
-	ASSERT(block_off + size_idx <= c->run.bitmap_nallocs);
-
-	uint32_t unit_max = RUN_UNIT_MAX;
-	struct memory_block nm = *m;
-	nm.size_idx = unit_max - (block_off % unit_max);
-	nm.block_off = block_off;
-	if (nm.size_idx > size_idx)
-		nm.size_idx = size_idx;
+	uint64_t shift = 0;
+	uint32_t inserted = 0;
 
 	do {
-		bucket_insert_block(b, &nm);
-		ASSERT(nm.size_idx <= UINT16_MAX);
-		ASSERT(nm.block_off + nm.size_idx <= UINT16_MAX);
-		nm.block_off = (uint16_t)(nm.block_off + (uint16_t)nm.size_idx);
-		size_idx -= nm.size_idx;
-		nm.size_idx = size_idx > unit_max ? unit_max : size_idx;
-	} while (size_idx != 0);
+		uint64_t shifted = ~(value >> shift);
+		if (shifted == UINT64_MAX) {
+			inserted += (uint32_t)(BITS_PER_VALUE - shift);
+
+			m->block_off = (uint16_t)(base_offset + shift);
+			m->size_idx = (uint32_t)(BITS_PER_VALUE - shift);
+			bucket_insert_block(b, m);
+
+			break;
+		} else if (shifted == 0) {
+			break;
+		}
+
+		unsigned off = (unsigned)__builtin_ctzll(shifted);
+		unsigned size = (unsigned)__builtin_ctzll(~shifted);
+
+		shift += off + size;
+
+		if (size != 0) {
+			inserted += (uint32_t)(size);
+
+			m->block_off = (uint16_t)(base_offset + (shift - size));
+			m->size_idx = (uint32_t)(size);
+			bucket_insert_block(b, m);
+		}
+	} while (shift != BITS_PER_VALUE);
+	
+	return inserted;
 }
 
 /*
@@ -471,7 +479,6 @@ heap_run_process_metadata(struct palloc_heap *heap, struct bucket *b,
 	ASSERTeq(m->size_idx, c->run.size_idx);
 
 	uint16_t block_off = 0;
-	uint16_t block_size_idx = 0;
 	uint32_t inserted_blocks = 0;
 
 	struct zone *z = ZID_TO_ZONE(heap->layout, m->zone_id);
@@ -479,47 +486,14 @@ heap_run_process_metadata(struct palloc_heap *heap, struct bucket *b,
 
 	ASSERTeq(run->block_size, c->unit_size);
 
+	struct memory_block nm = *m;
 	for (unsigned i = 0; i < c->run.bitmap_nval; ++i) {
 		ASSERT(i < MAX_BITMAP_VALUES);
 		uint64_t v = run->bitmap[i];
 		ASSERT(BITS_PER_VALUE * i <= UINT16_MAX);
 		block_off = (uint16_t)(BITS_PER_VALUE * i);
-		if (v == 0) {
-			heap_run_insert(heap, b, m, BITS_PER_VALUE, block_off);
-			inserted_blocks += BITS_PER_VALUE;
-			continue;
-		} else if (v == UINT64_MAX) {
-			continue;
-		}
-
-		for (unsigned j = 0; j < BITS_PER_VALUE; ++j) {
-			if (BIT_IS_CLR(v, j)) {
-				block_size_idx++;
-			} else if (block_size_idx != 0) {
-				ASSERT(block_off >= block_size_idx);
-
-				heap_run_insert(heap, b, m,
-					block_size_idx,
-					(uint16_t)(block_off - block_size_idx));
-				inserted_blocks += block_size_idx;
-				block_size_idx = 0;
-			}
-
-			if ((block_off++) == c->run.bitmap_nallocs) {
-				i = MAX_BITMAP_VALUES;
-				break;
-			}
-		}
-
-		if (block_size_idx != 0) {
-			ASSERT(block_off >= block_size_idx);
-
-			heap_run_insert(heap, b, m,
-					block_size_idx,
-					(uint16_t)(block_off - block_size_idx));
-			inserted_blocks += block_size_idx;
-			block_size_idx = 0;
-		}
+		inserted_blocks += heap_run_process_bitmap_value(b, &nm, v,
+			block_off);
 	}
 
 	return inserted_blocks;
@@ -746,16 +720,20 @@ static int
 heap_recycle_unused(struct palloc_heap *heap, struct recycler *recycler,
 	struct bucket *defb, int force)
 {
-	ASSERTeq(defb->aclass->type, CLASS_HUGE);
-
 	struct empty_runs r = recycler_recalc(recycler, force);
 	if (VEC_SIZE(&r) == 0)
 		return ENOMEM;
 
+	struct bucket *nb = defb == NULL ? heap_bucket_acquire_by_id(heap,
+		DEFAULT_ALLOC_CLASS_ID) : NULL;
+
 	struct memory_block *nm;
 	VEC_FOREACH_BY_PTR(nm, &r) {
-		heap_run_into_free_chunk(heap, defb, nm);
+		heap_run_into_free_chunk(heap, nb ? nb : defb, nm);
 	}
+
+	if (nb != NULL)
+		heap_bucket_release(heap, nb);
 
 	VEC_DELETE(&r);
 
@@ -818,15 +796,13 @@ heap_ensure_huge_bucket_filled(struct palloc_heap *heap, struct bucket *bucket)
  */
 static int
 heap_reuse_from_recycler(struct palloc_heap *heap,
-	struct bucket *b, struct bucket *defb, uint32_t units, int force)
+	struct bucket *b, uint32_t units, int force)
 {
 	struct memory_block m = MEMORY_BLOCK_NONE;
 	m.size_idx = units;
 
-	ASSERTeq(defb->aclass->type, CLASS_HUGE);
-
 	struct recycler *r = heap->rt->recyclers[b->aclass->id];
-	heap_recycle_unused(heap, r, defb, force);
+	heap_recycle_unused(heap, r, NULL, force);
 
 	if (recycler_get(r, &m) == 0) {
 		os_mutex_t *lock = m.m_ops->get_lock(&m);
@@ -854,9 +830,6 @@ heap_ensure_run_bucket_filled(struct palloc_heap *heap, struct bucket *b,
 	ASSERTeq(b->aclass->type, CLASS_RUN);
 	int ret = 0;
 
-	struct bucket *defb = heap_bucket_acquire_by_id(heap,
-		DEFAULT_ALLOC_CLASS_ID);
-
 	/* get rid of the active block in the bucket */
 	if (b->is_active) {
 		b->c_ops->rm_all(b->container);
@@ -868,20 +841,30 @@ heap_ensure_run_bucket_filled(struct palloc_heap *heap, struct bucket *b,
 		} else {
 			struct memory_block *m = &b->active_memory_block->m;
 			if (heap_reclaim_run(heap, m)) {
+				struct bucket *defb =
+					heap_bucket_acquire_by_id(heap,
+					DEFAULT_ALLOC_CLASS_ID);
+
 				heap_run_into_free_chunk(heap, defb, m);
+				heap_bucket_release(heap, defb);
+
 			}
 		}
 		b->is_active = 0;
 	}
 
-	if (heap_reuse_from_recycler(heap, b, defb, units, 0) == 0)
+	if (heap_reuse_from_recycler(heap, b, units, 0) == 0)
 		goto out;
 
 	struct memory_block m = MEMORY_BLOCK_NONE;
 	m.size_idx = b->aclass->run.size_idx;
 
+	struct bucket *defb = heap_bucket_acquire_by_id(heap,
+		DEFAULT_ALLOC_CLASS_ID);
 	/* cannot reuse an existing run, create a new one */
 	if (heap_get_bestfit_block(heap, defb, &m) == 0) {
+		heap_bucket_release(heap, defb);
+
 		ASSERTeq(m.block_off, 0);
 		heap_run_create(heap, b, &m);
 
@@ -890,13 +873,13 @@ heap_ensure_run_bucket_filled(struct palloc_heap *heap, struct bucket *b,
 
 		goto out;
 	}
+	heap_bucket_release(heap, defb);
 
-	if (heap_reuse_from_recycler(heap, b, defb, units, 0) == 0)
+	if (heap_reuse_from_recycler(heap, b, units, 0) == 0)
 		goto out;
 
 	ret = ENOMEM;
 out:
-	heap_bucket_release(heap, defb);
 
 	return ret;
 }

@@ -443,11 +443,101 @@ test_recycler(void)
 	MUNMAP_ANON_ALIGNED(mpop, MOCK_POOL_SIZE);
 }
 
+static uint32_t
+heap_run_process_bitmap_value(struct bucket *b, uint64_t value)
+{
+	uint64_t shift = 0;
+	int size = 0;
+	uint32_t inserted = 0;
+
+	do {
+		uint64_t shifted = ~(value >> shift);
+		if (shifted == UINT64_MAX) {
+			inserted += (uint32_t)(64 - shift);
+			printf("%lu %llu\n", shift, 64ULL - shift);
+
+			break;
+		} else if (shifted == 0) {
+			break;
+		}
+
+		int off = __builtin_ctzll(shifted);
+		size = __builtin_ctzll(~shifted);
+
+		shift += off + size;
+
+
+		if (size != 0) {
+			inserted += (uint32_t)(size);
+			printf("%lu %d\n", shift - size, size);
+		}
+	} while (shift != 64);
+	
+	return inserted;
+}
+
+/*
+ * heap_run_process_metadata -- (internal) parses the run bitmap
+ */
+static uint32_t
+heap_run_process_metadata(uint64_t value)
+{
+
+	uint64_t v = value;
+
+	uint16_t block_off = 0;
+	uint16_t block_size_idx = 0;
+	uint32_t inserted_blocks = 0;
+	for (unsigned j = 0; j < BITS_PER_VALUE; ++j) {
+		if (BIT_IS_CLR(v, j)) {
+			block_size_idx++;
+		} else if (block_size_idx != 0) {
+			ASSERT(block_off >= block_size_idx);
+
+			printf("%d %d\n", block_off - block_size_idx, block_size_idx);
+			inserted_blocks += block_size_idx;
+			block_size_idx = 0;
+		}
+
+		if ((block_off++) == 64) {
+			break;
+		}
+	}
+			if (block_size_idx != 0) {
+			ASSERT(block_off >= block_size_idx);
+
+			printf("%d %d\n", block_off - block_size_idx, block_size_idx);
+			inserted_blocks += block_size_idx;
+			block_size_idx = 0;
+		}
+
+	return inserted_blocks;
+}
+
 int
 main(int argc, char *argv[])
 {
 	START(argc, argv, "obj_heap");
 
+	//heap_run_process_bitmap_value(NULL, 0);
+	printf("---------\n");
+heap_run_process_metadata(
+0b1111111111111111111111111111111111111111111111000000000000000000);
+	printf("---------\n");
+	heap_run_process_bitmap_value(NULL,
+0b1111111111111111111111111111111111111111111111000000000000000000);
+	printf("---------\n");
+	heap_run_process_bitmap_value(NULL,
+0b0000000000000000001111111111111111111111111111111111111111111111);
+	printf("---------\n");
+	heap_run_process_bitmap_value(NULL,
+0b0001111010000000011111111111111110000001000000111010101010101100);
+	printf("---------\n");
+
+heap_run_process_metadata(
+0b0001111010000000011111111111111110000001000000111010101010101100);
+	printf("---------\n");
+	
 	test_heap();
 	test_recycler();
 
