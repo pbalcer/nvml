@@ -304,9 +304,11 @@ void
 recycler_pending_put(struct recycler *r,
 	struct memory_block_reserved *m)
 {
+	util_mutex_lock(&r->lock);
 	VEC_PUSH_BACK(&r->pending, m);
+	util_mutex_unlock(&r->lock);
 }
-#include <pthread.h>
+
 /*
  * recycler_recalc -- recalculates the scores of runs in the recycler to match
  *	the updated persistent state
@@ -374,8 +376,6 @@ recycler_recalc(struct recycler *r, int force)
 			VEC_PUSH_BACK(&r->recalc, score);
 		}
 	} while (found_units < search_limit);
-	
-	//printf("found %lu %lu %lu\n", units, r->unaccounted_total, found_units);
 
 	VEC_FOREACH(key, &r->recalc) {
 		ravl_insert(r->runs, (void *)key);

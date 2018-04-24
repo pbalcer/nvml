@@ -846,8 +846,8 @@ heap_ensure_run_bucket_filled(struct palloc_heap *heap, struct bucket *b,
 					DEFAULT_ALLOC_CLASS_ID);
 
 				heap_run_into_free_chunk(heap, defb, m);
-				heap_bucket_release(heap, defb);
 
+				heap_bucket_release(heap, defb);
 			}
 		}
 		b->is_active = 0;
@@ -863,13 +863,14 @@ heap_ensure_run_bucket_filled(struct palloc_heap *heap, struct bucket *b,
 		DEFAULT_ALLOC_CLASS_ID);
 	/* cannot reuse an existing run, create a new one */
 	if (heap_get_bestfit_block(heap, defb, &m) == 0) {
-		heap_bucket_release(heap, defb);
 
 		ASSERTeq(m.block_off, 0);
 		heap_run_create(heap, b, &m);
 
 		b->active_memory_block->m = m;
 		b->is_active = 1;
+
+		heap_bucket_release(heap, defb);
 
 		goto out;
 	}
