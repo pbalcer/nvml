@@ -67,8 +67,6 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "btree", "examples\libpmemob
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "obj_direct", "test\obj_direct\obj_direct.vcxproj", "{10469175-EEF7-44A0-9961-AC4E45EFD800}"
 EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "obj_direct_volatile", "test\obj_direct_volatile\obj_direct_volatile.vcxproj", "{10469175-EEF7-44A0-9961-AC4E45EFD800}"
-EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "pi", "examples\libpmemobj\pi.vcxproj", "{11D76FBC-DFAA-4B31-9DB0-206E171E3F94}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "pmemspoil", "test\tools\pmemspoil\pmemspoil.vcxproj", "{11E158AE-C85A-4A6E-B66A-ED2994709276}"
@@ -323,6 +321,8 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "pmem_is_pmem_windows", "tes
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "obj_pmemlog", "examples\libpmemobj\pmemlog\obj_pmemlog.vcxproj", "{60206D22-E132-4695-8486-10BECA32C5CC}"
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "obj_direct_volatile", "test\obj_direct_volatile\obj_direct_volatile.vcxproj", "{60243DF8-3D9E-4A7E-A2AF-6CCF7034CE39}"
+EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "obj_cpp_allocator", "test\obj_cpp_allocator\obj_cpp_allocator.vcxproj", "{6068773F-FDA7-484F-8650-EE1AA5C3CB37}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "libpmempool_backup", "test\libpmempool_backup\libpmempool_backup.vcxproj", "{60B463D4-8CD5-4BF6-A25B-01BE13B87590}"
@@ -359,6 +359,8 @@ EndProject
 Project("{2150E333-8FDC-42A3-9474-1A3956D46DE8}") = "string_store_tx", "string_store_tx", "{6D63CDF1-F62C-4614-AD8A-95B0A63AA070}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "set_funcs", "test\set_funcs\set_funcs.vcxproj", "{6D7C1169-3246-465F-B630-ECFEF4F3179A}"
+EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "pmem_unmap", "test\pmem_unmap\pmem_unmap.vcxproj", "{6EC93484-AAF3-487E-84E4-5ABFBA0AFC53}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "util_poolset", "test\util_poolset\util_poolset.vcxproj", "{6F06A19B-0921-4B71-A3A5-B350B5FFEADB}"
 EndProject
@@ -606,6 +608,13 @@ Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "libpmem", "libpmem\libpmem.
 		{901F04DB-E1A5-4A41-8B81-9D31C19ACD59} = {901F04DB-E1A5-4A41-8B81-9D31C19ACD59}
 	EndProjectSection
 EndProject
+Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "obj_cpp_v", "test\obj_cpp_v\obj_cpp_v.vcxproj", "{9FBA94B0-D406-4D45-8BAA-60D068F739F8}"
+	ProjectSection(ProjectDependencies) = postProject
+		{1BAA1617-93AE-4196-8A1A-BD492FB18AEF} = {1BAA1617-93AE-4196-8A1A-BD492FB18AEF}
+		{9E9E3D25-2139-4A5D-9200-18148DDEAD45} = {9E9E3D25-2139-4A5D-9200-18148DDEAD45}
+		{CE3F2DFB-8470-4802-AD37-21CAF6CB2681} = {CE3F2DFB-8470-4802-AD37-21CAF6CB2681}
+	EndProjectSection
+EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "manpage", "examples\libpmemlog\manpage.vcxproj", "{9FF51F3E-AF36-4F45-A797-C5F03A090298}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "obj_pmalloc_mt", "test\obj_pmalloc_mt\obj_pmalloc_mt.vcxproj", "{9FF62356-30B4-42A1-8DC7-45262A18DD44}"
@@ -832,13 +841,6 @@ EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "pmem_has_auto_flush_win", "test\pmem_has_auto_flush_win\pmem_has_auto_flush_win.vcxproj", "{DEA3CD0A-8781-4ABE-9A7D-00B91132FED0}"
 EndProject
 Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "obj_cpp_ptr", "test\obj_cpp_ptr\obj_cpp_ptr.vcxproj", "{DFEBEBAA-9624-445C-82A0-93363E22D806}"
-	ProjectSection(ProjectDependencies) = postProject
-		{1BAA1617-93AE-4196-8A1A-BD492FB18AEF} = {1BAA1617-93AE-4196-8A1A-BD492FB18AEF}
-		{9E9E3D25-2139-4A5D-9200-18148DDEAD45} = {9E9E3D25-2139-4A5D-9200-18148DDEAD45}
-		{CE3F2DFB-8470-4802-AD37-21CAF6CB2681} = {CE3F2DFB-8470-4802-AD37-21CAF6CB2681}
-	EndProjectSection
-EndProject
-Project("{8BC9CEB8-8B4A-11D0-8D11-00A0C91BC942}") = "obj_cpp_v", "test\obj_cpp_v\obj_cpp_v.vcxproj", "{DFEBEBAA-9624-445C-82A0-93363E22D806}"
 	ProjectSection(ProjectDependencies) = postProject
 		{1BAA1617-93AE-4196-8A1A-BD492FB18AEF} = {1BAA1617-93AE-4196-8A1A-BD492FB18AEF}
 		{9E9E3D25-2139-4A5D-9200-18148DDEAD45} = {9E9E3D25-2139-4A5D-9200-18148DDEAD45}
@@ -1379,6 +1381,10 @@ Global
 		{6D7C1169-3246-465F-B630-ECFEF4F3179A}.Debug|x64.Build.0 = Debug|x64
 		{6D7C1169-3246-465F-B630-ECFEF4F3179A}.Release|x64.ActiveCfg = Release|x64
 		{6D7C1169-3246-465F-B630-ECFEF4F3179A}.Release|x64.Build.0 = Release|x64
+		{6EC93484-AAF3-487E-84E4-5ABFBA0AFC53}.Debug|x64.ActiveCfg = Debug|x64
+		{6EC93484-AAF3-487E-84E4-5ABFBA0AFC53}.Debug|x64.Build.0 = Debug|x64
+		{6EC93484-AAF3-487E-84E4-5ABFBA0AFC53}.Release|x64.ActiveCfg = Release|x64
+		{6EC93484-AAF3-487E-84E4-5ABFBA0AFC53}.Release|x64.Build.0 = Release|x64
 		{6F06A19B-0921-4B71-A3A5-B350B5FFEADB}.Debug|x64.ActiveCfg = Debug|x64
 		{6F06A19B-0921-4B71-A3A5-B350B5FFEADB}.Debug|x64.Build.0 = Debug|x64
 		{6F06A19B-0921-4B71-A3A5-B350B5FFEADB}.Release|x64.ActiveCfg = Release|x64
@@ -2128,6 +2134,7 @@ Global
 		{6BCEF2A5-0CEC-4CC6-9CB0-D3FBF871A408} = {63C9B3F8-437D-4AD9-B32D-D04AE38C35B6}
 		{6D63CDF1-F62C-4614-AD8A-95B0A63AA070} = {F42C09CD-ABA5-4DA9-8383-5EA40FA4D763}
 		{6D7C1169-3246-465F-B630-ECFEF4F3179A} = {4C291EEB-3874-4724-9CC2-1335D13FF0EE}
+		{6EC93484-AAF3-487E-84E4-5ABFBA0AFC53} = {F8373EDD-1B9E-462D-BF23-55638E23E98B}
 		{6F06A19B-0921-4B71-A3A5-B350B5FFEADB} = {4C291EEB-3874-4724-9CC2-1335D13FF0EE}
 		{6F4953DA-FDC3-46CF-BF24-3752CCF2E1CB} = {63C9B3F8-437D-4AD9-B32D-D04AE38C35B6}
 		{70EE1D40-0C65-4985-8EFC-BD40EE3A89B2} = {63C9B3F8-437D-4AD9-B32D-D04AE38C35B6}
@@ -2307,6 +2314,9 @@ Global
 		{FEA09B48-34C2-4963-8A5A-F97BDA136D72} = {B870D8A6-12CD-4DD0-B843-833695C2310A}
 		{FF374D62-CBCF-401E-9A02-1D3DB8BE16E4} = {45E74E38-35CA-4CB6-8965-BC20D39659AF}
 		{FF6E5B0C-DC00-4C93-B9C2-63D1E858BA79} = {63C9B3F8-437D-4AD9-B32D-D04AE38C35B6}
+	EndGlobalSection
+	GlobalSection(ExtensibilityGlobals) = postSolution
+		SolutionGuid = {5E690324-2D48-486A-8D3C-DCB520D3F693}
 	EndGlobalSection
 	GlobalSection(ExtensibilityGlobals) = postSolution
 		SolutionGuid = {5E690324-2D48-486A-8D3C-DCB520D3F693}
