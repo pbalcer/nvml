@@ -44,103 +44,54 @@
 #include "valgrind_internal.h"
 
 /*
- * Operation flag at the two least significant bits
+ * Operation flag at the three least significant bits
  */
 #define REDO_OPERATION(op)		((uint64_t)(op))
-#define REDO_OPERATION_MASK		((uint64_t)(0b11))
+#define REDO_OPERATION_MASK		((uint64_t)(0b111))
 #define REDO_OPERATION_FROM_OFFSET(off)	((off) & REDO_OPERATION_MASK)
 #define REDO_OFFSET_MASK		(~(REDO_OPERATION_MASK))
 
 #define CACHELINE_ALIGN(size) ALIGN_UP(size, CACHELINE_SIZE)
 
-struct redo_ctx {
-	void *base;
-
-	struct pmem_ops p_ops;
-
-	redo_check_offset_fn check_offset;
-	void *check_offset_ctx;
-};
-
-typedef int (*redo_entry_cb)(const struct redo_ctx *ctx,
-	struct redo_log_entry *e, void *arg);
-
-/*
- * redo_log_config_new -- allocates redo context
- */
-struct redo_ctx *
-redo_log_config_new(void *base,
-		const struct pmem_ops *p_ops,
-		redo_check_offset_fn check_offset,
-		void *check_offset_ctx)
-{
-	struct redo_ctx *cfg = Malloc(sizeof(*cfg));
-	if (!cfg) {
-		ERR("!can't create redo log config");
-		return NULL;
-	}
-
-	cfg->base = base;
-	cfg->p_ops = *p_ops;
-	cfg->check_offset = check_offset;
-	cfg->check_offset_ctx = check_offset_ctx;
-
-	return cfg;
-}
-
-/*
- * redo_log_config_delete -- frees redo context
- */
-void
-redo_log_config_delete(struct redo_ctx *ctx)
-{
-	Free(ctx);
-}
+typedef int (*redo_entry_cb)(struct redo_log_entry_base *e, void *arg,
+	const struct pmem_ops *p_ops);
 
 /*
  * redo_log_next_by_offset -- calculates the next pointer
  */
 static struct redo_log *
-redo_log_next_by_offset(const struct redo_ctx *ctx, size_t offset)
+redo_log_next_by_offset(size_t offset, void *base)
 {
 	return offset == 0 ? NULL :
-		(struct redo_log *)((char *)ctx->base + offset);
+		(struct redo_log *)((char *)base + offset);
 }
 
 /*
  * redo_log_next -- retrieves the pointer to the next redo log
  */
 static struct redo_log *
-redo_log_next(const struct redo_ctx *ctx, struct redo_log *redo)
+redo_log_next(struct redo_log *redo, void *base)
 {
-	return redo_log_next_by_offset(ctx, redo->next);
+	return redo_log_next_by_offset(redo->next, base);
+}
+
+
+/*
+ * redo_log_operation -- returns the type of entry operation
+ */
+enum redo_operation_type
+redo_log_entry_type(const struct redo_log_entry_base *entry)
+{
+	return REDO_OPERATION_FROM_OFFSET(entry->offset);
 }
 
 /*
- * redo_log_foreach_entry -- iterates over every existing entry in the redo log
+ * redo_log_offset -- returns offset
  */
-static int
-redo_log_foreach_entry(const struct redo_ctx *ctx, struct redo_log *redo,
-	redo_entry_cb cb, void *arg)
+uint64_t
+redo_log_entry_offset(const struct redo_log_entry_base *entry)
 {
-	struct redo_log_entry *e;
-	int ret = 0;
-	size_t nentries = 0;
-
-	for (struct redo_log *r = redo; r != NULL; r = redo_log_next(ctx, r)) {
-		for (size_t i = 0; i < r->capacity; ++i) {
-			if (nentries == redo->nentries)
-				return ret;
-
-			nentries++;
-
-			e = &r->entries[i];
-			if ((ret = cb(ctx, e, arg)) != 0)
-				return ret;
-		}
-	}
-
-	return ret;
+	return entry->offset & REDO_OFFSET_MASK;
 }
 
 /*
@@ -153,16 +104,44 @@ redo_log_nentries(struct redo_log *redo)
 }
 
 /*
+ * redo_log_foreach_entry -- iterates over every existing entry in the redo log
+ */
+static int
+redo_log_foreach_entry(struct redo_log *redo,
+	redo_entry_cb cb, void *arg, const struct pmem_ops *p_ops)
+{
+	struct redo_log_entry_base *e;
+	int ret = 0;
+	size_t nentries = 0;
+	size_t offset = 0;
+	void *base = p_ops->base;
+
+	for (struct redo_log *r = redo; r != NULL; r = redo_log_next(r, base)) {
+		for (size_t i = 0; i < r->capacity; ++i) {
+			if (nentries == redo->nentries)
+				return ret;
+
+			nentries++;
+			e = (struct redo_log_entry_base *)r->data + offset;
+
+			if ((ret = cb(e, arg, p_ops)) != 0)
+				return ret;
+		}
+	}
+
+	return ret;
+}
+
+/*
  * redo_log_capacity -- (internal) returns the total capacity of the redo log
  */
 size_t
-redo_log_capacity(const struct redo_ctx *ctx,
-	struct redo_log *redo, size_t redo_base_capacity)
+redo_log_capacity(struct redo_log *redo, size_t redo_base_bytes, void *base)
 {
-	size_t capacity = redo_base_capacity;
+	size_t capacity = redo_base_bytes;
 
-	/* skip the first one, we count it in 'redo_base_capacity' */
-	while ((redo = redo_log_next(ctx, redo)) != NULL) {
+	/* skip the first one, we count it in 'redo_base_bytes' */
+	while ((redo = redo_log_next(redo, base)) != NULL) {
 		capacity += redo->capacity;
 	}
 
@@ -173,36 +152,36 @@ redo_log_capacity(const struct redo_ctx *ctx,
  * redo_log_rebuild_next_vec -- rebuilds the vector of next entries
  */
 void
-redo_log_rebuild_next_vec(const struct redo_ctx *ctx,
-	struct redo_log *redo, struct redo_next *next)
+redo_log_rebuild_next_vec(struct redo_log *redo, struct redo_next *next,
+	void *base)
 {
 	do {
 		if (redo->next != 0)
 			VEC_PUSH_BACK(next, redo->next);
-	} while ((redo = redo_log_next(ctx, redo)) != NULL);
+	} while ((redo = redo_log_next(redo, base)) != NULL);
 }
 
 /*
  * redo_log_reserve -- (internal) reserves new capacity in the redo log
  */
 int
-redo_log_reserve(const struct redo_ctx *ctx, struct redo_log *redo,
+redo_log_reserve(struct redo_log *redo,
 	size_t redo_base_capacity, size_t *new_capacity, redo_extend_fn extend,
-	struct redo_next *next)
+	struct redo_next *next, void *base)
 {
 	size_t capacity = redo_base_capacity;
 
 	uint64_t offset;
 	VEC_FOREACH(offset, next) {
-		redo = redo_log_next_by_offset(ctx, offset);
+		redo = redo_log_next_by_offset(offset, base);
 		capacity += redo->capacity;
 	}
 
 	while (capacity < *new_capacity) {
-		if (extend(ctx->base, &redo->next) != 0)
+		if (extend(base, &redo->next) != 0)
 			return -1;
 		VEC_PUSH_BACK(next, redo->next);
-		redo = redo_log_next(ctx, redo);
+		redo = redo_log_next(redo, base);
 		capacity += redo->capacity;
 	}
 	*new_capacity = capacity;
@@ -214,9 +193,9 @@ redo_log_reserve(const struct redo_ctx *ctx, struct redo_log *redo,
  * redo_log_checksum -- (internal) calculates redo log checksum
  */
 static int
-redo_log_checksum(struct redo_log *redo, size_t nentries, int insert)
+redo_log_checksum(struct redo_log *redo, size_t redo_base_bytes, int insert)
 {
-	return util_checksum(redo, SIZEOF_REDO_LOG(nentries),
+	return util_checksum(redo, SIZEOF_REDO_LOG(redo_base_bytes),
 		&redo->checksum, insert, 0);
 }
 
@@ -227,9 +206,9 @@ redo_log_checksum(struct redo_log *redo, size_t nentries, int insert)
  * The source and destination redo logs must be cacheline aligned.
  */
 void
-redo_log_store(const struct redo_ctx *ctx, struct redo_log *dest,
-	struct redo_log *src, size_t nentries, size_t redo_base_capacity,
-	struct redo_next *next)
+redo_log_store(struct redo_log *dest, struct redo_log *src, size_t nentries,
+	size_t redo_base_capacity, struct redo_next *next,
+	struct pmem_ops *p_ops)
 {
 	/*
 	 * First, store all entries over the base capacity of the redo log in
@@ -243,14 +222,16 @@ redo_log_store(const struct redo_ctx *ctx, struct redo_log *dest,
 	size_t next_entries = nentries - dest_ncopy;
 	size_t nlog = 0;
 
+	void *base = p_ops->base;
+
 	while (next_entries > 0) {
-		redo = redo_log_next_by_offset(ctx, VEC_ARR(next)[nlog++]);
+		redo = redo_log_next_by_offset(VEC_ARR(next)[nlog++], base);
 		ASSERTne(redo, NULL);
 
 		size_t ncopy = MIN(next_entries, redo->capacity);
 		next_entries -= ncopy;
 
-		pmemops_memcpy(&ctx->p_ops,
+		pmemops_memcpy(p_ops,
 			redo->entries,
 			src->entries + offset,
 			CACHELINE_ALIGN(sizeof(struct redo_log_entry) * ncopy),
@@ -261,7 +242,7 @@ redo_log_store(const struct redo_ctx *ctx, struct redo_log *dest,
 	}
 
 	if (nlog != 0)
-		pmemops_drain(&ctx->p_ops);
+		pmemops_drain(p_ops);
 
 	/*
 	 * Then, calculate the checksum and store the first part of the
@@ -271,80 +252,109 @@ redo_log_store(const struct redo_ctx *ctx, struct redo_log *dest,
 	src->nentries = nentries; /* total number of entries */
 	redo_log_checksum(src, dest_ncopy, 1);
 
-	pmemops_memcpy(&ctx->p_ops, dest, src,
+	pmemops_memcpy(p_ops, dest, src,
 		CACHELINE_ALIGN(SIZEOF_REDO_LOG(dest_ncopy)),
 		PMEMOBJ_F_MEM_WC);
 }
 
-/*
- * redo_log_entry_create -- creates a new transient redo log entry
- */
+
 void
-redo_log_entry_create(const void *base,
-	struct redo_log_entry *entry, uint64_t *ptr, uint64_t value,
-	enum redo_operation_type type)
+redo_log_entry_val_create(struct redo_log_entry_base *entry, uint64_t *ptr,
+	uint64_t value, enum redo_operation_type type, const void *base)
 {
-	entry->offset = (uint64_t)(ptr) - (uint64_t)base;
-	entry->offset |= REDO_OPERATION(type);
-	entry->value = value;
+	struct redo_log_entry_val *e = (struct redo_log_entry_val *)entry;
+	e->base.offset = (uint64_t)(ptr) - (uint64_t)base;
+	e->base.offset |= REDO_OPERATION(type);
+	e->value = value;
 }
 
-/*
- * redo_log_operation -- returns the type of entry operation
- */
-enum redo_operation_type
-redo_log_operation(const struct redo_log_entry *entry)
+void
+redo_log_entry_buf_create(struct redo_log_entry_base *entry, uint64_t *ptr,
+	uint64_t size, const void *src, enum redo_operation_type type,
+	const struct pmem_ops *p_ops)
 {
-	return REDO_OPERATION_FROM_OFFSET(entry->offset);
-}
-
-/*
- * redo_log_offset -- returns offset
- */
-uint64_t
-redo_log_offset(const struct redo_log_entry *entry)
-{
-	return entry->offset & REDO_OFFSET_MASK;
+	struct redo_log_entry_buf *e = (struct redo_log_entry_buf *)entry;
+	e->base.offset = (uint64_t)(ptr) - (uint64_t)p_ops->base;
+	e->base.offset |= REDO_OPERATION(type);
+	e->size = size;
+	if (p_ops != NULL) {
+		pmemops_memcpy(p_ops, e->data, src, size, 0);
+	} else {
+		memcpy(e->data, src, size);
+	}
 }
 
 /*
  * redo_log_entry_apply -- applies modifications of a single redo log entry
  */
 void
-redo_log_entry_apply(void *base, const struct redo_log_entry *e,
-	flush_fn flush)
+redo_log_entry_apply(const struct redo_log_entry_base *e,
+	const struct pmem_ops *p_ops)
 {
-	enum redo_operation_type t = redo_log_operation(e);
-	uint64_t offset = redo_log_offset(e);
+	enum redo_operation_type t = redo_log_entry_type(e);
+	uint64_t offset = redo_log_entry_offset(e);
 
-	uint64_t *val = (uint64_t *)((uintptr_t)base + offset);
-	VALGRIND_ADD_TO_TX(val, sizeof(*val));
+	size_t dst_size = sizeof(uint64_t);
+	uint64_t *dst = (uint64_t *)((uintptr_t)p_ops->base + offset);
+
+	struct redo_log_entry_buf *eb;
+	struct redo_log_entry_val *ev;
+
 	switch (t) {
 		case REDO_OPERATION_AND:
-			*val &= e->value;
+			ev = (struct redo_log_entry_val *)e;
+
+			VALGRIND_ADD_TO_TX(dst, dst_size);
+			*dst &= ev->value;
+			pmemops_xflush(p_ops, dst, sizeof(uint64_t),
+				PMEMOBJ_F_RELAXED);
 		break;
 		case REDO_OPERATION_OR:
-			*val |= e->value;
+			ev = (struct redo_log_entry_val *)e;
+
+			VALGRIND_ADD_TO_TX(dst, dst_size);
+			*dst |= ev->value;
+			pmemops_xflush(p_ops, dst, sizeof(uint64_t),
+				PMEMOBJ_F_RELAXED);
 		break;
 		case REDO_OPERATION_SET:
-			*val = e->value;
+			ev = (struct redo_log_entry_val *)e;
+
+			VALGRIND_ADD_TO_TX(dst, dst_size);
+			*dst = ev->value;
+			pmemops_xflush(p_ops, dst, sizeof(uint64_t),
+				PMEMOBJ_F_RELAXED);
+		break;
+		case REDO_OPERATION_BUF_SET:
+			eb = (struct redo_log_entry_buf *)e;
+
+			dst_size = eb->size;
+			VALGRIND_ADD_TO_TX(dst, dst_size);
+			pmemops_memset(p_ops, dst, *eb->data, eb->size,
+				PMEMOBJ_F_RELAXED | PMEMOBJ_F_MEM_NODRAIN);
+		break;
+		case REDO_OPERATION_BUF_CPY:
+			eb = (struct redo_log_entry_buf *)e;
+
+			dst_size = eb->size;
+			VALGRIND_ADD_TO_TX(dst, dst_size);
+			pmemops_memcpy(p_ops, dst, eb->data, eb->size,
+				PMEMOBJ_F_RELAXED | PMEMOBJ_F_MEM_NODRAIN);
 		break;
 		default:
 			ASSERT(0);
 	}
-	VALGRIND_REMOVE_FROM_TX(val, sizeof(*val));
-
-	flush(base, val, sizeof(uint64_t), PMEMOBJ_F_RELAXED);
+	VALGRIND_REMOVE_FROM_TX(dst, dst_size);
 }
 
 /*
  * redo_log_process_entry -- processes a single redo log entry
  */
 static int
-redo_log_process_entry(const struct redo_ctx *ctx,
-	struct redo_log_entry *e, void *arg)
+redo_log_process_entry(struct redo_log_entry_base *e, void *arg,
+	const struct pmem_ops *p_ops)
 {
-	redo_log_entry_apply(ctx->base, e, ctx->p_ops.flush);
+	redo_log_entry_apply(e, p_ops);
 
 	return 0;
 }
@@ -353,18 +363,17 @@ redo_log_process_entry(const struct redo_ctx *ctx,
  * redo_log_clobber -- zeroes the metadata of the redo log
  */
 void
-redo_log_clobber(const struct redo_ctx *ctx, struct redo_log *dest,
-	struct redo_next *next)
+redo_log_clobber(struct redo_log *dest, struct redo_next *next,
+	const struct pmem_ops *p_ops)
 {
-	struct redo_log empty;
-	memset(&empty, 0, sizeof(empty));
+	static struct redo_log empty;
 
 	if (next != NULL)
 		empty.next = VEC_SIZE(next) == 0 ? 0 : VEC_FRONT(next);
 	else
 		empty.next = dest->next;
 
-	pmemops_memcpy(&ctx->p_ops, dest, &empty, sizeof(empty),
+	pmemops_memcpy(p_ops, dest, &empty, sizeof(empty),
 		PMEMOBJ_F_MEM_WC);
 }
 
@@ -372,14 +381,14 @@ redo_log_clobber(const struct redo_ctx *ctx, struct redo_log *dest,
  * redo_log_process -- (internal) process redo log entries
  */
 void
-redo_log_process(const struct redo_ctx *ctx, struct redo_log *redo)
+redo_log_process(struct redo_log *redo, const struct pmem_ops *p_ops)
 {
 	LOG(15, "redo %p", redo);
 
 #ifdef DEBUG
-	ASSERTeq(redo_log_check(ctx, redo), 0);
+	ASSERTeq(redo_log_check(redo, p_ops), 0);
 #endif
-	redo_log_foreach_entry(ctx, redo, redo_log_process_entry, NULL);
+	redo_log_foreach_entry(redo, redo_log_process_entry, NULL, p_ops);
 }
 
 /*
@@ -388,15 +397,14 @@ redo_log_process(const struct redo_ctx *ctx, struct redo_log *redo)
  * The redo_log_recover shall be preceded by redo_log_check call.
  */
 void
-redo_log_recover(const struct redo_ctx *ctx, struct redo_log *redo)
+redo_log_recover(struct redo_log *redo, const struct pmem_ops *p_ops)
 {
 	LOG(15, "redo %p", redo);
-	ASSERTne(ctx, NULL);
 
 	size_t nentries = MIN(redo->nentries, redo->capacity);
 	if (nentries != 0 && redo_log_checksum(redo, nentries, 0)) {
-		redo_log_process(ctx, redo);
-		redo_log_clobber(ctx, redo, NULL);
+		redo_log_process(redo, p_ops);
+		redo_log_clobber(redo, NULL, p_ops);
 	}
 }
 
@@ -404,39 +412,30 @@ redo_log_recover(const struct redo_ctx *ctx, struct redo_log *redo)
  * redo_log_check_entry -- checks consistency of a single redo log entry
  */
 static int
-redo_log_check_entry(const struct redo_ctx *ctx, struct redo_log_entry *e,
-	void *arg)
+redo_log_check_entry(struct redo_log_entry_base *e,
+	void *arg, const struct pmem_ops *p_ops)
 {
-	uint64_t offset = redo_log_offset(e);
+	uint64_t offset = redo_log_entry_offset(e);
+	/*
 	if (!ctx->check_offset(ctx->check_offset_ctx, offset)) {
 		LOG(15, "redo %p invalid offset %" PRIu64,
 				e, e->offset);
 		return -1;
-	}
-	return 0;
+	}*/
+	return offset == 0 ? -1 : 0;
 }
 
 /*
  * redo_log_check -- (internal) check consistency of redo log entries
  */
 int
-redo_log_check(const struct redo_ctx *ctx, struct redo_log *redo)
+redo_log_check(struct redo_log *redo, const struct pmem_ops *p_ops)
 {
 	LOG(15, "redo %p", redo);
-	ASSERTne(ctx, NULL);
 
 	if (redo->nentries != 0)
-		return redo_log_foreach_entry(ctx, redo,
-			redo_log_check_entry, NULL);
+		return redo_log_foreach_entry(redo,
+			redo_log_check_entry, NULL, p_ops);
 
 	return 0;
-}
-
-/*
- * redo_get_pmem_ops -- returns pmem_ops
- */
-const struct pmem_ops *
-redo_get_pmem_ops(const struct redo_ctx *ctx)
-{
-	return &ctx->p_ops;
 }
