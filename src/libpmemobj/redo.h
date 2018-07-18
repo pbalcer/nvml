@@ -67,10 +67,9 @@ struct redo_log_entry_buf {
 #define REDO_LOG(capacity_bytes) {\
 	/* 128 bytes of metadata (two cachelines) */\
 	uint64_t checksum; /* checksum of redo header and its entries */\
-	uint64_t nentries; /* total number of entries (incl. next redo) */\
 	uint64_t next; /* offset of redo log extension */\
 	uint64_t capacity; /* capacity of this redo in bytes */\
-	uint64_t unused[4]; /* must be 0 */\
+	uint64_t unused[5]; /* must be 0 */\
 	/* N bytes of data */\
 	uint8_t data[];\
 }\
@@ -94,28 +93,30 @@ typedef int (*redo_check_offset_fn)(void *ctx, uint64_t offset);
 typedef int (*redo_extend_fn)(void *, uint64_t *);
 
 size_t redo_log_capacity(struct redo_log *redo, size_t redo_base_bytes,
-	void *base);
+	const struct pmem_ops *p_ops);
 void redo_log_rebuild_next_vec(struct redo_log *redo, struct redo_next *next,
-	void *base);
+	const struct pmem_ops *p_ops);
 
 int redo_log_reserve(struct redo_log *redo,
 	size_t redo_base_bytes, size_t *new_capacity_bytes,
-	redo_extend_fn extend, struct redo_next *next, void *base);
+	redo_extend_fn extend, struct redo_next *next,
+	const struct pmem_ops *p_ops);
+
 void redo_log_store(struct redo_log *dest,
-	struct redo_log *src, size_t nentries, size_t redo_base_bytes,
+	struct redo_log *src, size_t nbytes, size_t redo_base_bytes,
 	struct redo_next *next, struct pmem_ops *p_ops);
+
 void redo_log_clobber(struct redo_log *dest, struct redo_next *next,
 	const struct pmem_ops *p_ops);
 void redo_log_process(struct redo_log *redo, const struct pmem_ops *p_ops);
-
-size_t redo_log_nentries(struct redo_log *redo);
 
 uint64_t redo_log_entry_offset(const struct redo_log_entry_base *entry);
 enum redo_operation_type redo_log_entry_type(
 	const struct redo_log_entry_base *entry);
 
 void redo_log_entry_val_create(struct redo_log_entry_base *entry, uint64_t *ptr,
-	uint64_t value, enum redo_operation_type type, const void *base);
+	uint64_t value, enum redo_operation_type type,
+	const struct pmem_ops *p_ops);
 
 void redo_log_entry_buf_create(struct redo_log_entry_base *entry, uint64_t *ptr,
 	uint64_t size, const void *src, enum redo_operation_type type,

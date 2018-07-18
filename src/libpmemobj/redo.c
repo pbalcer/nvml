@@ -60,19 +60,19 @@ typedef int (*redo_entry_cb)(struct redo_log_entry_base *e, void *arg,
  * redo_log_next_by_offset -- calculates the next pointer
  */
 static struct redo_log *
-redo_log_next_by_offset(size_t offset, void *base)
+redo_log_next_by_offset(size_t offset, const struct pmem_ops *p_ops)
 {
 	return offset == 0 ? NULL :
-		(struct redo_log *)((char *)base + offset);
+		(struct redo_log *)((char *)p_ops->base + offset);
 }
 
 /*
  * redo_log_next -- retrieves the pointer to the next redo log
  */
 static struct redo_log *
-redo_log_next(struct redo_log *redo, void *base)
+redo_log_next(struct redo_log *redo, const struct pmem_ops *p_ops)
 {
-	return redo_log_next_by_offset(redo->next, base);
+	return redo_log_next_by_offset(redo->next, p_ops);
 }
 
 
@@ -94,13 +94,34 @@ redo_log_entry_offset(const struct redo_log_entry_base *entry)
 	return entry->offset & REDO_OFFSET_MASK;
 }
 
-/*
- * redo_log_nentries -- returns number of entries in the redo log
- */
-size_t
-redo_log_nentries(struct redo_log *redo)
+static size_t
+redo_log_entry_size(const struct redo_log_entry_base *entry)
 {
-	return redo->nentries;
+	enum redo_operation_type t = redo_log_entry_type(entry);
+	struct redo_log_entry_buf *eb;
+
+	switch (t) {
+		case REDO_OPERATION_AND:
+		case REDO_OPERATION_OR:
+		case REDO_OPERATION_SET:
+			return sizeof(struct redo_log_entry_val);
+		break;
+		case REDO_OPERATION_BUF_SET:
+		case REDO_OPERATION_BUF_CPY:
+			eb = (struct redo_log_entry_buf *)entry;
+			return sizeof(struct redo_log_entry_val) + eb->size;
+		break;
+		default:
+			ASSERT(0);
+	}
+
+	return 0;
+}
+
+static int
+redo_log_entry_valid(const struct redo_log_entry_base *entry)
+{
+	return entry->offset != 0;
 }
 
 /*
@@ -112,20 +133,18 @@ redo_log_foreach_entry(struct redo_log *redo,
 {
 	struct redo_log_entry_base *e;
 	int ret = 0;
-	size_t nentries = 0;
-	size_t offset = 0;
 	void *base = p_ops->base;
 
 	for (struct redo_log *r = redo; r != NULL; r = redo_log_next(r, base)) {
-		for (size_t i = 0; i < r->capacity; ++i) {
-			if (nentries == redo->nentries)
-				return ret;
-
-			nentries++;
+		for (size_t offset = 0; offset < r->capacity; ) {
 			e = (struct redo_log_entry_base *)r->data + offset;
+			if (redo_log_entry_valid(e))
+				return ret;
 
 			if ((ret = cb(e, arg, p_ops)) != 0)
 				return ret;
+
+			offset += redo_log_entry_size(e);
 		}
 	}
 
@@ -136,12 +155,13 @@ redo_log_foreach_entry(struct redo_log *redo,
  * redo_log_capacity -- (internal) returns the total capacity of the redo log
  */
 size_t
-redo_log_capacity(struct redo_log *redo, size_t redo_base_bytes, void *base)
+redo_log_capacity(struct redo_log *redo, size_t redo_base_bytes,
+	const struct pmem_ops *p_ops)
 {
 	size_t capacity = redo_base_bytes;
 
 	/* skip the first one, we count it in 'redo_base_bytes' */
-	while ((redo = redo_log_next(redo, base)) != NULL) {
+	while ((redo = redo_log_next(redo, p_ops)) != NULL) {
 		capacity += redo->capacity;
 	}
 
@@ -153,12 +173,12 @@ redo_log_capacity(struct redo_log *redo, size_t redo_base_bytes, void *base)
  */
 void
 redo_log_rebuild_next_vec(struct redo_log *redo, struct redo_next *next,
-	void *base)
+	const struct pmem_ops *p_ops)
 {
 	do {
 		if (redo->next != 0)
 			VEC_PUSH_BACK(next, redo->next);
-	} while ((redo = redo_log_next(redo, base)) != NULL);
+	} while ((redo = redo_log_next(redo, p_ops)) != NULL);
 }
 
 /*
@@ -167,21 +187,22 @@ redo_log_rebuild_next_vec(struct redo_log *redo, struct redo_next *next,
 int
 redo_log_reserve(struct redo_log *redo,
 	size_t redo_base_capacity, size_t *new_capacity, redo_extend_fn extend,
-	struct redo_next *next, void *base)
+	struct redo_next *next,
+	const struct pmem_ops *p_ops)
 {
 	size_t capacity = redo_base_capacity;
 
 	uint64_t offset;
 	VEC_FOREACH(offset, next) {
-		redo = redo_log_next_by_offset(offset, base);
+		redo = redo_log_next_by_offset(offset, p_ops);
 		capacity += redo->capacity;
 	}
 
 	while (capacity < *new_capacity) {
-		if (extend(base, &redo->next) != 0)
+		if (extend(p_ops->base, &redo->next) != 0)
 			return -1;
 		VEC_PUSH_BACK(next, redo->next);
-		redo = redo_log_next(redo, base);
+		redo = redo_log_next(redo, p_ops);
 		capacity += redo->capacity;
 	}
 	*new_capacity = capacity;
@@ -206,8 +227,8 @@ redo_log_checksum(struct redo_log *redo, size_t redo_base_bytes, int insert)
  * The source and destination redo logs must be cacheline aligned.
  */
 void
-redo_log_store(struct redo_log *dest, struct redo_log *src, size_t nentries,
-	size_t redo_base_capacity, struct redo_next *next,
+redo_log_store(struct redo_log *dest, struct redo_log *src, size_t nbytes,
+	size_t redo_base_bytes, struct redo_next *next,
 	struct pmem_ops *p_ops)
 {
 	/*
@@ -217,28 +238,30 @@ redo_log_store(struct redo_log *dest, struct redo_log *src, size_t nentries,
 	 * worry about failsafety here.
 	 */
 	struct redo_log *redo = dest;
-	size_t offset = redo_base_capacity;
-	size_t dest_ncopy = MIN(nentries, redo_base_capacity);
-	size_t next_entries = nentries - dest_ncopy;
+	size_t offset = redo_base_bytes;
+
+	size_t base_nbytes = MIN(redo_base_bytes, nbytes);
+	size_t next_nbytes = base_nbytes - redo_base_bytes;
+
 	size_t nlog = 0;
 
 	void *base = p_ops->base;
 
-	while (next_entries > 0) {
+	while (next_nbytes > 0) {
 		redo = redo_log_next_by_offset(VEC_ARR(next)[nlog++], base);
 		ASSERTne(redo, NULL);
 
-		size_t ncopy = MIN(next_entries, redo->capacity);
-		next_entries -= ncopy;
+		size_t copy_nbytes = MIN(next_nbytes, redo->capacity);
+		next_nbytes -= copy_nbytes;
 
 		pmemops_memcpy(p_ops,
-			redo->entries,
-			src->entries + offset,
-			CACHELINE_ALIGN(sizeof(struct redo_log_entry) * ncopy),
+			redo->data,
+			src->data + offset,
+			CACHELINE_ALIGN(copy_nbytes),
 			PMEMOBJ_F_MEM_WC |
 			PMEMOBJ_F_MEM_NODRAIN |
 			PMEMOBJ_F_RELAXED);
-		offset += ncopy;
+		offset += copy_nbytes;
 	}
 
 	if (nlog != 0)
@@ -249,21 +272,20 @@ redo_log_store(struct redo_log *dest, struct redo_log *src, size_t nentries,
 	 * redo log.
 	 */
 	src->next = VEC_SIZE(next) == 0 ? 0 : VEC_FRONT(next);
-	src->nentries = nentries; /* total number of entries */
-	redo_log_checksum(src, dest_ncopy, 1);
+	redo_log_checksum(src, base_nbytes, 1);
 
 	pmemops_memcpy(p_ops, dest, src,
-		CACHELINE_ALIGN(SIZEOF_REDO_LOG(dest_ncopy)),
+		CACHELINE_ALIGN(SIZEOF_REDO_LOG(base_nbytes)),
 		PMEMOBJ_F_MEM_WC);
 }
 
-
 void
 redo_log_entry_val_create(struct redo_log_entry_base *entry, uint64_t *ptr,
-	uint64_t value, enum redo_operation_type type, const void *base)
+	uint64_t value, enum redo_operation_type type,
+	const struct pmem_ops *p_ops)
 {
 	struct redo_log_entry_val *e = (struct redo_log_entry_val *)entry;
-	e->base.offset = (uint64_t)(ptr) - (uint64_t)base;
+	e->base.offset = (uint64_t)(ptr) - (uint64_t)p_ops->base;
 	e->base.offset |= REDO_OPERATION(type);
 	e->value = value;
 }
@@ -392,6 +414,36 @@ redo_log_process(struct redo_log *redo, const struct pmem_ops *p_ops)
 }
 
 /*
+ * redo_log_count_entry -- counts redo log entries
+ */
+static int
+redo_log_count_entry(struct redo_log_entry_base *e, void *arg,
+	const struct pmem_ops *p_ops)
+{
+	size_t *nentries = arg;
+	*nentries += 1;
+
+	return 0;
+}
+
+static size_t
+redo_log_base_nbytes(struct redo_log *redo)
+{
+	size_t offset = 0;
+	struct redo_log_entry_base *e;
+
+	for (offset = 0; offset < redo->capacity; ) {
+		e = (struct redo_log_entry_base *)redo->data + offset;
+		if (!redo_log_entry_valid(e))
+			break;
+
+		offset += redo_log_entry_size(e);
+	}	
+
+	return offset;
+}
+
+/*
  * redo_log_recover -- (internal) recovery of redo log
  *
  * The redo_log_recover shall be preceded by redo_log_check call.
@@ -401,8 +453,8 @@ redo_log_recover(struct redo_log *redo, const struct pmem_ops *p_ops)
 {
 	LOG(15, "redo %p", redo);
 
-	size_t nentries = MIN(redo->nentries, redo->capacity);
-	if (nentries != 0 && redo_log_checksum(redo, nentries, 0)) {
+	size_t nbytes = MIN(redo_log_base_nbytes(redo), redo->capacity);
+	if (nbytes != 0 && redo_log_checksum(redo, nbytes, 0)) {
 		redo_log_process(redo, p_ops);
 		redo_log_clobber(redo, NULL, p_ops);
 	}
@@ -433,9 +485,6 @@ redo_log_check(struct redo_log *redo, const struct pmem_ops *p_ops)
 {
 	LOG(15, "redo %p", redo);
 
-	if (redo->nentries != 0)
-		return redo_log_foreach_entry(redo,
+	return redo_log_foreach_entry(redo,
 			redo_log_check_entry, NULL, p_ops);
-
-	return 0;
 }

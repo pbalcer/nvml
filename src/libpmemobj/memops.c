@@ -48,7 +48,7 @@
 #include "out.h"
 #include "valgrind_internal.h"
 
-#define REDO_LOG_BASE_ENTRIES 128
+#define REDO_LOG_BASE_SIZE 1024
 #define OP_MERGE_SEARCH 64
 
 struct operation_log {
@@ -61,10 +61,8 @@ struct operation_log {
  * operation_context -- context of an ongoing palloc operation
  */
 struct operation_context {
-	void *base; /* pool address */
 	redo_extend_fn extend; /* function to allocate next redo logs */
 
-	const struct redo_ctx *redo_ctx;
 	const struct pmem_ops *p_ops;
 
 	struct redo_log *redo; /* pointer to the persistent redo log */
@@ -86,16 +84,16 @@ struct operation_context {
 static int
 operation_log_transient_init(struct operation_log *log)
 {
-	log->capacity = REDO_LOG_BASE_ENTRIES;
+	log->capacity = REDO_LOG_BASE_SIZE;
 	log->size = 0;
 
 	struct redo_log *src = Zalloc(sizeof(struct redo_log) +
-	(sizeof(struct redo_log_entry) * REDO_LOG_BASE_ENTRIES));
+		REDO_LOG_BASE_SIZE);
 	if (src == NULL)
 		return -1;
 
 	/* initialize underlying redo log structure */
-	src->capacity = REDO_LOG_BASE_ENTRIES;
+	src->capacity = REDO_LOG_BASE_SIZE;
 
 	log->redo = src;
 
@@ -110,11 +108,11 @@ static int
 operation_log_persistent_init(struct operation_log *log,
 	size_t redo_base_capacity)
 {
-	log->capacity = REDO_LOG_BASE_ENTRIES;
+	log->capacity = REDO_LOG_BASE_SIZE;
 	log->size = 0;
 
 	struct redo_log *src = Zalloc(sizeof(struct redo_log) +
-	(sizeof(struct redo_log_entry) * REDO_LOG_BASE_ENTRIES));
+		REDO_LOG_BASE_SIZE);
 	if (src == NULL)
 		return -1;
 
@@ -131,28 +129,22 @@ operation_log_persistent_init(struct operation_log *log,
  * operation_new -- creates new operation context
  */
 struct operation_context *
-operation_new(void *base, const struct redo_ctx *redo_ctx,
-	struct redo_log *redo, size_t redo_base_capacity, redo_extend_fn extend)
+operation_new(struct redo_log *redo, size_t redo_base_capacity,
+	redo_extend_fn extend, const struct pmem_ops *p_ops)
 {
 	struct operation_context *ctx = Zalloc(sizeof(*ctx));
 	if (ctx == NULL)
 		goto error_ctx_alloc;
 
-	ctx->base = base;
-	ctx->redo_ctx = redo_ctx;
 	ctx->redo = redo;
 	ctx->redo_base_capacity = redo_base_capacity;
-	ctx->redo_capacity = redo_log_capacity(redo_ctx, redo,
-		redo_base_capacity);
+	ctx->redo_capacity = redo_log_capacity(redo,
+		redo_base_capacity, p_ops);
 	ctx->extend = extend;
 	ctx->in_progress = 0;
 	VEC_INIT(&ctx->next);
-	redo_log_rebuild_next_vec(redo_ctx, redo, &ctx->next);
-
-	if (redo_ctx)
-		ctx->p_ops = redo_get_pmem_ops(redo_ctx);
-	else
-		ctx->p_ops = NULL;
+	redo_log_rebuild_next_vec(redo, &ctx->next, p_ops);
+	ctx->p_ops = p_ops;
 
 	if (operation_log_transient_init(&ctx->transient_ops) != 0)
 		goto error_redo_alloc;
