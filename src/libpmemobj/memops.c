@@ -53,7 +53,7 @@
 
 struct operation_log {
 	size_t capacity; /* capacity of the redo log */
-	size_t size; /* number of entries currently in the redo log */
+	size_t offset;
 	struct redo_log *redo; /* DRAM allocated log of modifications */
 };
 
@@ -85,7 +85,7 @@ static int
 operation_log_transient_init(struct operation_log *log)
 {
 	log->capacity = REDO_LOG_BASE_SIZE;
-	log->size = 0;
+	log->offset = 0;
 
 	struct redo_log *src = Zalloc(sizeof(struct redo_log) +
 		REDO_LOG_BASE_SIZE);
@@ -109,7 +109,7 @@ operation_log_persistent_init(struct operation_log *log,
 	size_t redo_base_capacity)
 {
 	log->capacity = REDO_LOG_BASE_SIZE;
-	log->size = 0;
+	log->offset = 0;
 
 	struct redo_log *src = Zalloc(sizeof(struct redo_log) +
 		REDO_LOG_BASE_SIZE);
@@ -176,16 +176,22 @@ operation_delete(struct operation_context *ctx)
  * operation_apply -- (internal) performs operation on a field
  */
 static inline void
-operation_apply(struct redo_log_entry *oentry, struct redo_log_entry *nentry,
+operation_apply(struct redo_log_entry_base *oentry,
+	struct redo_log_entry_base *nentry,
 	enum redo_operation_type op_type)
 {
+	struct redo_log_entry_val *oe = (struct redo_log_entry_val *)oentry;
+	struct redo_log_entry_val *ne = (struct redo_log_entry_val *)nentry;
+
 	switch (op_type) {
 		case REDO_OPERATION_AND:
-			oentry->value &= nentry->value;
+			oe->value &= ne->value;
 		break;
 		case REDO_OPERATION_OR:
-			oentry->value |= nentry->value;
+			oe->value |= ne->value;
 		break;
+		case REDO_OPERATION_BUF_CPY:
+		case REDO_OPERATION_BUF_SET:
 		case REDO_OPERATION_SET: /* do nothing, duplicate entry */
 		break;
 		default:
@@ -207,14 +213,14 @@ operation_add_typed_entry(struct operation_context *ctx,
 	 * New entry to be added to the operations, all operations eventually
 	 * come down to a set operation regardless.
 	 */
-	struct redo_log_entry entry;
-	redo_log_entry_create(ctx->base, &entry, ptr, value, type);
+	struct redo_log_entry_base entry;
+	redo_log_entry_val_create(&entry, ptr, value, type, ctx->p_ops);
 
 	struct operation_log *oplog = log_type == LOG_PERSISTENT ?
 		&ctx->pshadow_ops : &ctx->transient_ops;
 
 	struct redo_log_entry *e; /* existing entry */
-
+#if 0
 	/* search last few entries to see if we could merge ops */
 	for (size_t i = 1; i <= OP_MERGE_SEARCH && oplog->size >= i; ++i) {
 		e = &oplog->redo->entries[oplog->size - i];
@@ -228,14 +234,14 @@ operation_add_typed_entry(struct operation_context *ctx,
 			}
 		}
 	}
-
-	if (oplog->size == oplog->capacity) {
-		size_t ncapacity = oplog->capacity + REDO_LOG_BASE_ENTRIES;
+#endif
+	if (oplog->offset == oplog->capacity) {
+		size_t ncapacity = oplog->capacity + REDO_LOG_BASE_SIZE;
 		struct redo_log *redo = Realloc(oplog->redo,
 			SIZEOF_REDO_LOG(ncapacity));
 		if (redo == NULL)
 			return -1;
-		oplog->capacity += REDO_LOG_BASE_ENTRIES;
+		oplog->capacity += REDO_LOG_BASE_SIZE;
 		oplog->redo = redo;
 	}
 

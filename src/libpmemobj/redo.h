@@ -75,7 +75,7 @@ struct redo_log_entry_buf {
 }\
 
 #define SIZEOF_REDO_LOG(base_capacity)\
-(sizeof(struct redo_log) + redo_base_bytes)
+(sizeof(struct redo_log) + base_capacity)
 
 struct redo_log REDO_LOG(0);
 
@@ -124,6 +124,8 @@ void redo_log_entry_buf_create(struct redo_log_entry_base *entry, uint64_t *ptr,
 
 void redo_log_entry_apply(const struct redo_log_entry_base *e,
 	const struct pmem_ops *p_ops);
+
+size_t redo_log_entry_size(const struct redo_log_entry_base *entry);
 
 void redo_log_recover(struct redo_log *redo, const struct pmem_ops *p_ops);
 int redo_log_check(struct redo_log *redo, const struct pmem_ops *p_ops);

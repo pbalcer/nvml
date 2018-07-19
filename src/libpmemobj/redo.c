@@ -94,7 +94,7 @@ redo_log_entry_offset(const struct redo_log_entry_base *entry)
 	return entry->offset & REDO_OFFSET_MASK;
 }
 
-static size_t
+size_t
 redo_log_entry_size(const struct redo_log_entry_base *entry)
 {
 	enum redo_operation_type t = redo_log_entry_type(entry);
