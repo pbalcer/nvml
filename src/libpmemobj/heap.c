@@ -657,7 +657,7 @@ heap_reclaim_garbage(struct palloc_heap *heap, struct bucket *bucket)
 		if ((r = heap->rt->recyclers[i]) == NULL)
 			continue;
 
-		if (heap_recycle_unused(heap, r, bucket, 1) == 0)
+		if (heap_recycle_unused(heap, r, bucket, 0) == 0)
 			ret = 0;
 	}
 
