@@ -691,7 +691,6 @@ heap_ensure_run_bucket_filled(struct palloc_heap *heap, struct bucket *b,
 		DEFAULT_ALLOC_CLASS_ID);
 	/* cannot reuse an existing run, create a new one */
 	if (heap_get_bestfit_block(heap, defb, &m) == 0) {
-
 		ASSERTeq(m.block_off, 0);
 		if (heap_run_create(heap, b, &m) != 0) {
 			heap_bucket_release(heap, defb);
