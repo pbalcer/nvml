@@ -92,6 +92,45 @@ test_open(const char *path)
 	pmemobj_close(pop);
 }
 
+/*
+ * test_malloc_free -- 
+ */
+static void
+test_malloc_free(const char *path)
+{
+	PMEMobjpool *pop = NULL;
+
+	if ((pop = pmemobj_create(path, LAYOUT_NAME,
+			0, S_IWUSR | S_IRUSR)) == NULL)
+		UT_FATAL("!pmemobj_create: %s", path);
+
+	PMEMoid *oid = malloc(sizeof(PMEMoid) * 1000000);
+	size_t n = 0;
+	while (1) {
+		if (pmemobj_alloc(pop, &oid[n], 128 * 1024, 0, NULL, NULL) != 0)
+			break;
+		n++;
+	}
+
+	UT_OUT("allocated: %lu", n);
+
+	for (size_t i = 0; i < n; ++i) {
+		pmemobj_free(&oid[i]);
+	}
+
+	n = 0;
+	while (1) {
+		if (pmemobj_alloc(pop, &oid[n], 128 * 1024, 0, NULL, NULL) != 0)
+			break;
+		n++;
+	}
+
+	UT_OUT("allocated: %lu", n);
+
+	pmemobj_close(pop);
+}
+
+
 int
 main(int argc, char *argv[])
 {
@@ -106,6 +145,8 @@ main(int argc, char *argv[])
 		test_create(path);
 	else if (op == 'o')
 		test_open(path);
+	else if (op == 'f')
+		test_malloc_free(path);
 	else
 		UT_FATAL("invalid operation");
 
