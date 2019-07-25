@@ -1,5 +1,5 @@
 /*
- * Copyright 2015-2018, Intel Corporation
+ * Copyright 2015-2019, Intel Corporation
  *
  * Redistribution and use in source and binary forms, with or without
  * modification, are permitted provided that the following conditions
@@ -93,7 +93,8 @@ test_open(const char *path)
 }
 
 /*
- * test_malloc_free -- 
+ * test_malloc_free -- test if alloc until OOM/free/alloc until OOM sequence
+ *	produces the same number of allocations for the second alloc loop.
  */
 static void
 test_malloc_free(const char *path)
@@ -111,8 +112,7 @@ test_malloc_free(const char *path)
 			break;
 		n++;
 	}
-
-	UT_OUT("allocated: %lu", n);
+	size_t first_run_allocated = n;
 
 	for (size_t i = 0; i < n; ++i) {
 		pmemobj_free(&oid[i]);
@@ -124,8 +124,7 @@ test_malloc_free(const char *path)
 			break;
 		n++;
 	}
-
-	UT_OUT("allocated: %lu", n);
+	UT_ASSERTeq(first_run_allocated, n);
 
 	pmemobj_close(pop);
 }
