@@ -988,7 +988,10 @@ palloc_defrag(struct palloc_heap *heap, uint64_t **objv, size_t objcnt,
 		}
 
 		struct memory_block m = memblock_from_offset(heap, offset);
+		os_mutex_t *mlock = m.m_ops->get_lock(&m);
+		os_mutex_lock(mlock);
 		unsigned original_fillpct = m.m_ops->fill_pct(&m);
+		os_mutex_unlock(mlock);
 
 		if (result)
 			result->total++;
@@ -1021,7 +1024,11 @@ palloc_defrag(struct palloc_heap *heap, uint64_t **objv, size_t objcnt,
 		uint64_t new_offset = reserve->heap.offset;
 
 		struct memory_block nm = memblock_from_offset(heap, offset);
+
+		mlock = nm.m_ops->get_lock(&nm);
+		os_mutex_lock(mlock);
 		unsigned new_fillpct = nm.m_ops->fill_pct(&nm);
+		os_mutex_unlock(mlock);
 
 		if (original_fillpct > new_fillpct) {
 			palloc_cancel(heap, reserve, 1);
