@@ -35,7 +35,7 @@
 #define NOBJECT_THREAD 64
 #define ALLOC_CLASS_ARENA 2
 #define NTHREADX 16
-#define NARENAS 16
+#define NARENAS 8
 #define DEFAULT_ARENAS_MAX (1 << 10)
 
 static os_mutex_t lock;
