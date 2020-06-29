@@ -791,7 +791,7 @@ function validate_valgrind_log() {
 	then
 		msg=$(interactive_red STDERR "failed")
 		echo -e "$UNITTEST_NAME $msg with Valgrind. See $1. Last 20 lines below." >&2
-		paste -d " " <(yes $UNITTEST_NAME $1 | head -n 20) <(tail -n 20 $1) >&2
+		paste -d " " <(yes $UNITTEST_NAME $1 | head -n 200) <(tail -n 200 $1) >&2
 		false
 	fi
 }
