@@ -153,6 +153,15 @@ worker_arenas_flag(void *arg)
 		UT_ASSERTeq(ret, 0);
 	}
 
+	util_mutex_lock(&lock);
+	nth++;
+	if (nth == NTHREAD)
+		os_cond_broadcast(&cond);
+	else
+		while (nth < NTHREAD)
+			os_cond_wait(&cond, &lock);
+	util_mutex_unlock(&lock);
+
 	/*
 	 * Tests POBJ_ARENA_ID with pmemobj_xalloc.
 	 * All object are frees after pthread join.
