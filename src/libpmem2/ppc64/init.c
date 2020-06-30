@@ -88,12 +88,12 @@ ppc_flush_msync(const void *addr, size_t len)
 	 * Msyncing such memory is not a bug, so as a workaround temporarily
 	 * disable error reporting.
 	 */
-	VALGRIND_DO_DISABLE_ERROR_REPORTING;
+	//VALGRIND_DO_DISABLE_ERROR_REPORTING;
 
-	if (msync((void *)uptr, len, MS_SYNC) < 0)
-		ERR("!msync");
+	//if (msync((void *)uptr, len, MS_SYNC) < 0)
+	//	ERR("!msync");
 
-	VALGRIND_DO_ENABLE_ERROR_REPORTING;
+	//VALGRIND_DO_ENABLE_ERROR_REPORTING;
 
 	/* full flush */
 	VALGRIND_DO_PERSIST(uptr, len);
