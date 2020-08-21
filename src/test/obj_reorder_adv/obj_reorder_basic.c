@@ -48,13 +48,15 @@ main(int argc, char *argv[])
 		UT_FATAL("usage: %s w|c file", argv[0]);
 
 	PMEMobjpool *pop = pmemobj_open(argv[2], LAYOUT_NAME);
-	UT_ASSERT(pop != NULL);
+	if (pop == NULL) {
+		printf("pmemobj_open\n");
+		return 1;
+	}
 
 	char opt = argv[1][0];
 	switch (opt) {
 		case 'w':
 		{
-			pmemobj_alloc(pop, NULL, 3 * (1 << 20), 0, NULL, NULL);
 			VALGRIND_EMIT_LOG("PMREORDER_MARKER_WRITE.BEGIN");
 
 			write_consistent(pop);
