@@ -21,3 +21,10 @@ pmem2_source_device_usc(const struct pmem2_source *src, uint64_t *usc)
 	ERR("Cannot read device usc - ndctl is not available");
 	return PMEM2_E_NOSUPP;
 }
+
+int
+pmem2_source_numa_node(const struct pmem2_source *src, int *numa_node)
+{
+	ERR("Cannot get numa node - ndctl is not available");
+	return PMEM2_E_NOSUPP;
+}

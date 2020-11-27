@@ -228,3 +228,10 @@ pmem2_source_device_usc(const struct pmem2_source *src, uint64_t *usc)
 
 	return 0;
 }
+
+int
+pmem2_source_numa_node(const struct pmem2_source *src, int *numa_node)
+{
+	ERR("Getting numa node from source not supported on Windows.");
+	return PMEM2_E_NOSUPP;
+}
