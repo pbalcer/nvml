@@ -20,6 +20,7 @@ SOURCE =\
 	memops_generic.c\
 	map.c\
 	map_posix.c\
+	numa_$(OS_DIMM).c\
 	persist.c\
 	persist_posix.c\
 	pmem2_utils.c\
@@ -45,9 +46,13 @@ SOURCE +=\
 endif
 
 ifeq ($(OS_DIMM),ndctl)
-SOURCE += region_namespace_ndctl.c
+SOURCE +=\
+	region_namespace_ndctl.c\
+	numa_ndctl.c
 else
-SOURCE += region_namespace_none.c
+SOURCE +=\
+	region_namespace_none.c\
+	numa_none.c
 endif
 
 include $(ARCH)/sources.inc
