@@ -53,6 +53,15 @@ main(int argc, char *argv[])
 	DONE(NULL);
 }
 
+FUNC_MOCK(pmem2_region_namespace, int, struct ndctl_ctx *ctx,
+			const struct pmem2_source *src,
+			struct ndctl_region **pregion,
+			struct ndctl_namespace **pndns)
+FUNC_MOCK_RUN_DEFAULT {
+	*pregion = (void *)0x1;
+	return 0;
+} FUNC_MOCK_END
+
 FUNC_MOCK(ndctl_region_get_numa_node, int, const struct ndctl_region *pregion)
 FUNC_MOCK_RUN_DEFAULT {
 	if (numa_nodes_it < numa_nodes_size) {

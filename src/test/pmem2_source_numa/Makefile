@@ -18,7 +18,7 @@ OBJS +=\
 	ut_pmem2_source.o\
 	ut_pmem2_utils.o
 
-LIBPMEM2=y
+LIBPMEM2=internal-debug
 
 include ../Makefile.inc
 LDFLAGS += $(call extract_funcs, pmem2_source_numa.c)
