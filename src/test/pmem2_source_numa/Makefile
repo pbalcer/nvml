@@ -9,15 +9,16 @@ TOP = ../../..
 
 vpath %.c $(TOP)/src/test/unittest
 vpath %.c $(TOP)/src/libpmem2
-# vpath %.c $(TOP)/src/common/
 
 INCS += -I$(TOP)/src/libpmem2
 TARGET = pmem2_source_numa
-OBJS += errormsg.o\
+OBJS +=\
 	pmem2_source_numa.o\
 	ut_pmem2_config.o\
 	ut_pmem2_source.o\
 	ut_pmem2_utils.o
 
-LIBPMEMCOMMON=y
+LIBPMEM2=y
+
 include ../Makefile.inc
+LDFLAGS += $(call extract_funcs, pmem2_source_numa.c)

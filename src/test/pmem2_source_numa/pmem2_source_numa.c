@@ -23,17 +23,15 @@ main(int argc, char *argv[])
 {
 	START(argc, argv, "pmem2_source_numa");
 
-	if (argc < 3)
+	if (argc < 3) {
 		UT_FATAL("usage: %s (file numa_node)...", argv[0]);
+	}
 
 	unsigned files = (unsigned)(argc - 1) / 2;
 	numa_nodes = MALLOC(files * sizeof(numa_nodes[0]));
 	numa_nodes_size = files;
 
 	char **args = argv + 1;
-	struct pmem2_config *cfg;
-	PMEM2_CONFIG_NEW(&cfg);
-
 	for (unsigned i = 0; i < files; i++) {
 		unsigned arg_position = i * 2;
 		int fd = OPEN(args[arg_position], O_CREAT | O_RDWR, 0666);
@@ -51,9 +49,7 @@ main(int argc, char *argv[])
 		CLOSE(fd);
 	}
 
-	PMEM2_CONFIG_DELETE(&cfg);
 	FREE(numa_nodes);
-
 	DONE(NULL);
 }
 
@@ -61,9 +57,11 @@ FUNC_MOCK(ndctl_region_get_numa_node, int, const struct ndctl_region *pregion)
 FUNC_MOCK_RUN_DEFAULT {
 	if (numa_nodes_it < numa_nodes_size) {
 		if (pregion != NULL) {
+			printf("Returning node: %d", *numa_nodes[numa_nodes_it]);
 			return *numa_nodes[numa_nodes_it++];
 		}
+		UT_FATAL("region is null.");
 	}
-	return -1;
+	UT_FATAL("Requested more numa nodes than given in test.");
 }
 FUNC_MOCK_END
