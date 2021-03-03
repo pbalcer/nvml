@@ -1491,7 +1491,10 @@ heap_boot(struct palloc_heap *heap, void *heap_start, uint64_t heap_size,
 	for (unsigned i = 0; i < h->nlocks; ++i)
 		util_mutex_init(&h->run_locks[i]);
 
-	os_tls_key_create(&h->arenas.thread, heap_thread_arena_destructor);
+	if ((err = os_tls_key_create(&h->arenas.thread,
+			heap_thread_arena_destructor)) != 0) {
+		goto error_key_create;
+	}
 
 	heap->p_ops = *p_ops;
 	heap->layout = heap_start;
@@ -1518,6 +1521,7 @@ heap_boot(struct palloc_heap *heap, void *heap_start, uint64_t heap_size,
 
 	return 0;
 
+error_key_create:
 error_vec_reserve:
 	heap_arenas_fini(&h->arenas);
 error_arenas_malloc:
